@@ -1,0 +1,136 @@
+{
+  "updatedAt": "2026-11-21T23:17:05.198Z",
+  "boardReferencePoints": [
+    {
+      "id": "p1",
+      "label": "20 / 1 Double Intersection (Top)",
+      "angleDeg": 9,
+      "normalizedBoard": {
+        "x": 0.5266,
+        "y": 0.3318
+      }
+    },
+    {
+      "id": "p2",
+      "label": "6 / 10 Double Intersection (Right)",
+      "angleDeg": 99,
+      "normalizedBoard": {
+        "x": 0.6682,
+        "y": 0.5266
+      }
+    },
+    {
+      "id": "p3",
+      "label": "3 / 19 Double Intersection (Bottom)",
+      "angleDeg": 189,
+      "normalizedBoard": {
+        "x": 0.4734,
+        "y": 0.6682
+      }
+    },
+    {
+      "id": "p4",
+      "label": "11 / 14 Double Intersection (Left)",
+      "angleDeg": 279,
+      "normalizedBoard": {
+        "x": 0.3318,
+        "y": 0.4734
+      }
+    }
+  ],
+  "cameras": {
+    "cam1": {
+      "id": "cam1",
+      "name": "Camera 1 (10 o'clock)",
+      "position": "10 o'clock",
+      "devicePath": "USB Camera 0",
+      "streamUrl": "",
+      "calibrated": true,
+      "showOverlay": true,
+      "points": [
+        {
+          "x": 0.525,
+          "y": 0.165,
+          "label": "20/1"
+        },
+        {
+          "x": 0.835,
+          "y": 0.525,
+          "label": "6/10"
+        },
+        {
+          "x": 0.475,
+          "y": 0.835,
+          "label": "3/19"
+        },
+        {
+          "x": 0.165,
+          "y": 0.475,
+          "label": "11/14"
+        }
+      ]
+    },
+    "cam2": {
+      "id": "cam2",
+      "name": "Camera 2 (2 o'clock)",
+      "position": "2 o'clock",
+      "devicePath": "USB Camera 1",
+      "streamUrl": "",
+      "calibrated": true,
+      "showOverlay": true,
+      "points": [
+        {
+          "x": 0.53,
+          "y": 0.17,
+          "label": "20/1"
+        },
+        {
+          "x": 0.83,
+          "y": 0.53,
+          "label": "6/10"
+        },
+        {
+          "x": 0.47,
+          "y": 0.83,
+          "label": "3/19"
+        },
+        {
+          "x": 0.17,
+          "y": 0.47,
+          "label": "11/14"
+        }
+      ]
+    },
+    "cam3": {
+      "id": "cam3",
+      "name": "Camera 3 (6 o'clock)",
+      "position": "6 o'clock",
+      "devicePath": "USB Camera 2",
+      "streamUrl": "",
+      "calibrated": true,
+      "showOverlay": true,
+      "points": [
+        {
+          "x": 0.522,
+          "y": 0.168,
+          "label": "20/1"
+        },
+        {
+          "x": 0.832,
+          "y": 0.522,
+          "label": "6/10"
+        },
+        {
+          "x": 0.478,
+          "y": 0.832,
+          "label": "3/19"
+        },
+        {
+          "x": 0.168,
+          "y": 0.478,
+          "label": "11/14"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #020617;
+    color: #f8fafc;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom subtle scrollbars for TV Accuracy Log */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0f172a;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+@keyframes segmentFlash {
+  0% {
+    opacity: 1;
+    filter: drop-shadow(0 0 18px #10b981);
+  }
+  50% {
+    opacity: 0.85;
+    filter: drop-shadow(0 0 28px #34d399);
+  }
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 8px #10b981);
+  }
+}
+
+.segment-pulse {
+  animation: segmentFlash 0.65s ease-in-out 2;
+}
