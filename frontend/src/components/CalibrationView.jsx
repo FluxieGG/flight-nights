@@ -10,37 +10,317 @@ import {
   Crosshair,
   Sliders,
   Video,
-  Sparkles
+  Sparkles,
+  Compass
 } from 'lucide-react';
 import {
   BOARD_SECTORS,
   BOARD_RADII,
+  OPEN_BOTTOM_GAP,
+  RING_LAYOUT_PRESETS,
   CALIBRATION_REFERENCE_TARGETS,
+  normalizeDeg,
+  isAngleInOpenBottom,
+  isAngleInTopBar,
+  angleToClockLabel,
+  angleToNearestSector,
+  computeTriangulationMetrics,
+  computePerspectivePresetPoints,
+  polarToCartesian,
+  createArcPath,
   buildBoardHomography,
-  createProjectedRingPath
+  createProjectedRingPath,
+  createProjectedArcPath
 } from '../utils/dartboardMath';
 
-// Default realistic camera perspective presets for 10 o'clock, 2 o'clock, and 6 o'clock OV9732 cameras
-const CAMERA_PRESET_POINTS = {
-  cam1: [
-    { x: 0.525, y: 0.165, label: '20/1' },
-    { x: 0.835, y: 0.525, label: '6/10' },
-    { x: 0.475, y: 0.835, label: '3/19' },
-    { x: 0.165, y: 0.475, label: '11/14' }
-  ],
-  cam2: [
-    { x: 0.530, y: 0.170, label: '20/1' },
-    { x: 0.830, y: 0.530, label: '6/10' },
-    { x: 0.470, y: 0.830, label: '3/19' },
-    { x: 0.170, y: 0.470, label: '11/14' }
-  ],
-  cam3: [
-    { x: 0.522, y: 0.168, label: '20/1' },
-    { x: 0.832, y: 0.522, label: '6/10' },
-    { x: 0.478, y: 0.832, label: '3/19' },
-    { x: 0.168, y: 0.478, label: '11/14' }
-  ]
+const CAMERA_COLORS = {
+  cam1: '#10b981', // emerald
+  cam2: '#38bdf8', // sky
+  cam3: '#f59e0b'  // amber
 };
+
+const DEFAULT_MOUNT_ANGLES = {
+  cam1: 345,
+  cam2: 110,
+  cam3: 235
+};
+
+/**
+ * Interactive top-down diagram of the 270° open-bottom LED ring light, the 12 o'clock
+ * mounting bar obstruction, the dartboard numbers, and the 3 camera mounting spots.
+ */
+function RingMountDiagram({ cameras, activeLayoutId, onSelectLayout }) {
+  const size = 270;
+  const cx = size / 2;
+  const cy = size / 2;
+  const boardR = 72;
+  const numR = 84;
+  const ringR = 104;
+  const camLabelR = 122;
+
+  const angles = cameras.map((c) =>
+    typeof c.mountAngleDeg === 'number' ? c.mountAngleDeg : DEFAULT_MOUNT_ANGLES[c.id] || 0
+  );
+  const metrics = computeTriangulationMetrics(angles);
+
+  return (
+    <div className="grid grid-cols-1 gap-5 rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl lg:grid-cols-12">
+      {/* Top-Down Ring SVG */}
+      <div className="flex flex-col items-center justify-center lg:col-span-4">
+        <svg viewBox={`0 0 ${size} ${size}`} className="h-[250px] w-[250px] select-none">
+          {/* Dartboard Base */}
+          <circle cx={cx} cy={cy} r={boardR} fill="#0b1120" stroke="#334155" strokeWidth="1.5" />
+          <circle cx={cx} cy={cy} r={boardR * 0.93} fill="none" stroke="#1e293b" strokeWidth="1" />
+          <circle cx={cx} cy={cy} r={boardR * 0.62} fill="none" stroke="#1e293b" strokeWidth="1" />
+          <circle cx={cx} cy={cy} r={7} fill="#14532d" stroke="#475569" strokeWidth="1" />
+          <circle cx={cx} cy={cy} r={3} fill="#dc2626" />
+
+          {/* Key Dartboard Sector Numbers */}
+          {BOARD_SECTORS.map((num, idx) => {
+            const deg = idx * 18;
+            const pos = polarToCartesian(cx, cy, numR, deg);
+            const highlight = [20, 5, 1, 10, 15, 3, 16, 8].includes(num);
+            return (
+              <text
+                key={num}
+                x={pos.x}
+                y={pos.y}
+                textAnchor="middle"
+                dominantBaseline="central"
+                className={`font-mono text-[8px] font-bold ${
+                  highlight ? 'fill-slate-200' : 'fill-slate-500'
+                }`}
+              >
+                {num}
+              </text>
+            );
+          })}
+
+          {/* Open Bottom Missing Section (4:30 to 7:30) */}
+          <path
+            d={createArcPath(cx, cy, ringR, OPEN_BOTTOM_GAP.startDeg, OPEN_BOTTOM_GAP.endDeg)}
+            fill="none"
+            stroke="#f43f5e"
+            strokeWidth="3"
+            strokeDasharray="4 4"
+            strokeOpacity="0.65"
+          />
+          <text
+            x={cx}
+            y={cy + ringR + 14}
+            textAnchor="middle"
+            className="fill-rose-400 font-mono text-[8px] font-black uppercase"
+          >
+            Open Bottom (No Ring)
+          </text>
+
+          {/* Illuminated 270° Ring Light Arc (7:30 clockwise over 12:00 to 4:30) */}
+          <path
+            d={createArcPath(cx, cy, ringR, OPEN_BOTTOM_GAP.endDeg, OPEN_BOTTOM_GAP.startDeg)}
+            fill="none"
+            stroke="#e2e8f0"
+            strokeWidth="6"
+            strokeLinecap="round"
+            strokeOpacity="0.85"
+          />
+          <path
+            d={createArcPath(cx, cy, ringR, OPEN_BOTTOM_GAP.endDeg, OPEN_BOTTOM_GAP.startDeg)}
+            fill="none"
+            stroke="#38bdf8"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeOpacity="0.7"
+          />
+
+          {/* 12 o'clock Mounting Bar Obstruction */}
+          <g>
+            <rect
+              x={cx - 6}
+              y={cy - ringR - 9}
+              width="12"
+              height="18"
+              rx="2.5"
+              fill="#f43f5e"
+              stroke="#020617"
+              strokeWidth="1.5"
+            />
+            <text
+              x={cx}
+              y={cy - ringR - 14}
+              textAnchor="middle"
+              className="fill-rose-300 font-mono text-[8px] font-black uppercase"
+            >
+              12:00 Bar
+            </text>
+          </g>
+
+          {/* Camera Mount Points + Sightlines */}
+          {cameras.map((cam, idx) => {
+            const angle =
+              typeof cam.mountAngleDeg === 'number'
+                ? cam.mountAngleDeg
+                : DEFAULT_MOUNT_ANGLES[cam.id] || 0;
+            const color = CAMERA_COLORS[cam.id] || '#10b981';
+            const pt = polarToCartesian(cx, cy, ringR, angle);
+            const lbl = polarToCartesian(cx, cy, camLabelR, angle);
+            const invalid = isAngleInOpenBottom(angle) || isAngleInTopBar(angle);
+
+            return (
+              <g key={cam.id}>
+                <line
+                  x1={pt.x}
+                  y1={pt.y}
+                  x2={cx}
+                  y2={cy}
+                  stroke={invalid ? '#f43f5e' : color}
+                  strokeWidth="1.3"
+                  strokeDasharray="3 3"
+                  strokeOpacity="0.7"
+                />
+                <circle
+                  cx={pt.x}
+                  cy={pt.y}
+                  r="8"
+                  fill="#020617"
+                  stroke={invalid ? '#f43f5e' : color}
+                  strokeWidth="2.5"
+                />
+                <text
+                  x={pt.x}
+                  y={pt.y + 0.5}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  className="fill-white font-mono text-[8px] font-black"
+                >
+                  {`C${idx + 1}`}
+                </text>
+                <text
+                  x={lbl.x}
+                  y={lbl.y}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fill={invalid ? '#fda4af' : color}
+                  className="font-mono text-[8px] font-black"
+                >
+                  {angleToClockLabel(angle)}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* Layout Selector & Physical Mounting Specs */}
+      <div className="flex flex-col justify-between space-y-4 lg:col-span-8">
+        <div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Compass className="h-5 w-5 text-cyan-400" />
+              <h3 className="text-base font-black text-white sm:text-lg">
+                270° Open-Bottom Ring Layout (Clears 12:00 Bar &amp; Open Bottom)
+              </h3>
+            </div>
+
+            <span
+              className={`rounded-full border px-3 py-1 font-mono text-xs font-black ${
+                metrics.isOptimal
+                  ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+                  : 'border-amber-500/40 bg-amber-500/15 text-amber-300'
+              }`}
+            >
+              Gaps: {metrics.gapsDeg.join('° / ')}°
+            </span>
+          </div>
+
+          <p className="mt-1.5 text-xs leading-relaxed text-slate-300 sm:text-sm">
+            Because your ring light has <strong className="text-white">no bottom section (~4:30–7:30)</strong> and a{' '}
+            <strong className="text-white">bar at 12 o&apos;clock</strong>, mount Camera 1 slightly off-center (left toward{' '}
+            <strong className="text-emerald-300">5</strong> or right toward{' '}
+            <strong className="text-emerald-300">1</strong>) and balance Cameras 2 &amp; 3 along the lower legs of the ring for near-120° triangulation:
+          </p>
+        </div>
+
+        {/* 1-Click Top Camera Side Switcher */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {Object.values(RING_LAYOUT_PRESETS).map((preset) => {
+            const isSelected = activeLayoutId === preset.id;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => onSelectLayout(preset.id)}
+                className={`flex flex-col items-start rounded-xl border p-3.5 text-left transition ${
+                  isSelected
+                    ? 'border-emerald-400 bg-emerald-500/15 shadow-md shadow-emerald-950/50'
+                    : 'border-slate-700 bg-slate-950/70 hover:border-slate-500 hover:bg-slate-800/70'
+                }`}
+              >
+                <div className="flex w-full items-center justify-between gap-2">
+                  <span className="text-sm font-black text-white">
+                    {preset.id === 'ring270_left5'
+                      ? 'Option A: Left of Bar (toward 5)'
+                      : 'Option B: Right of Bar (toward 1)'}
+                  </span>
+                  {isSelected && (
+                    <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-black uppercase text-slate-950">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 font-mono text-xs text-slate-300">{preset.summary}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Exact Physical Mounting Readout Cards */}
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+          {cameras.map((cam, idx) => {
+            const angle =
+              typeof cam.mountAngleDeg === 'number'
+                ? cam.mountAngleDeg
+                : DEFAULT_MOUNT_ANGLES[cam.id] || 0;
+            const sector = angleToNearestSector(angle);
+            const clock = angleToClockLabel(angle);
+            const inGap = isAngleInOpenBottom(angle);
+            const inBar = isAngleInTopBar(angle);
+            const color = CAMERA_COLORS[cam.id] || '#10b981';
+
+            return (
+              <div
+                key={cam.id}
+                className={`rounded-xl border p-3 ${
+                  inGap || inBar
+                    ? 'border-rose-500/50 bg-rose-950/30'
+                    : 'border-slate-800 bg-slate-950/80'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black uppercase" style={{ color }}>
+                    Cam {idx + 1} · {clock}
+                  </span>
+                  <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] font-bold text-slate-200">
+                    {Math.round(normalizeDeg(angle))}°
+                  </span>
+                </div>
+                <div className="mt-1 text-xs font-bold text-white">
+                  Align over Sector <span className="font-mono text-emerald-300">{sector}</span>
+                </div>
+                <div className="mt-0.5 text-[11px] text-slate-400">
+                  {inGap
+                    ? 'Warning: Inside open bottom gap!'
+                    : inBar
+                    ? 'Warning: Hits 12:00 mounting bar!'
+                    : 'Clears bar & open bottom'}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Renders a Windows 10 USB camera feed, an MJPEG stream feed, or a realistic simulated OV9732
@@ -48,39 +328,73 @@ const CAMERA_PRESET_POINTS = {
  * from the 4 clicked reference points.
  */
 function CameraCalibrationCanvas({
+  slotNumber,
+  slotKey,
+  slotTitle,
+  slotColor,
+  slotPositionTip,
   camera,
   diagnostic,
   windowsVideoDevices,
+  assignedDeviceId,
+  onAssignDevice,
   onUpdatePoints,
   onToggleOverlay,
-  onUpdateStreamUrl
+  onUpdateStreamUrl,
+  onUpdateMountAngle,
+  onSaveSingleCamera,
+  isSaved,
+  savedTimestamp
 }) {
   const containerRef = useRef(null);
   const videoRef = useRef(null);
   const [draggingIdx, setDraggingIdx] = useState(null);
   const [streamError, setStreamError] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [useBrowserWebcam, setUseBrowserWebcam] = useState(false);
-  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [useBrowserWebcam, setUseBrowserWebcam] = useState(true);
+  const [justSaved, setJustSaved] = useState(false);
+  const [selectedDeviceId, setSelectedDeviceId] = useState(
+    assignedDeviceId || (windowsVideoDevices[slotNumber - 1]?.deviceId) || ''
+  );
   const [webcamError, setWebcamError] = useState(null);
 
-  const points = Array.isArray(camera.points) ? camera.points : [];
-  const showOverlay = camera.showOverlay !== false;
+  useEffect(() => {
+    if (assignedDeviceId) {
+      setSelectedDeviceId(assignedDeviceId);
+    } else if (windowsVideoDevices[slotNumber - 1]?.deviceId) {
+      setSelectedDeviceId(windowsVideoDevices[slotNumber - 1].deviceId);
+    }
+  }, [assignedDeviceId, windowsVideoDevices, slotNumber]);
+
+  const points = Array.isArray(camera?.points) ? camera.points : [];
+  const showOverlay = camera?.showOverlay !== false;
   const isComplete = points.length === 4;
   const nextPointTarget =
     points.length < 4 ? CALIBRATION_REFERENCE_TARGETS[points.length] : null;
 
+  const mountAngleDeg =
+    typeof camera?.mountAngleDeg === 'number'
+      ? camera.mountAngleDeg
+      : DEFAULT_MOUNT_ANGLES[slotKey] || 345;
+
   // Connect to selected Windows 10 USB UVC camera via MediaDevices API
   useEffect(() => {
     let activeStream = null;
+    let isMounted = true;
+
     if (useBrowserWebcam && navigator.mediaDevices?.getUserMedia) {
-      const videoConstraint = selectedDeviceId
-        ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      const deviceIdToUse = selectedDeviceId || windowsVideoDevices[slotNumber - 1]?.deviceId;
+      const videoConstraint = deviceIdToUse
+        ? { deviceId: { exact: deviceIdToUse }, width: { ideal: 1280 }, height: { ideal: 720 } }
         : { width: { ideal: 1280 }, height: { ideal: 720 } };
 
       navigator.mediaDevices
         .getUserMedia({ video: videoConstraint, audio: false })
         .then((stream) => {
+          if (!isMounted) {
+            stream.getTracks().forEach((t) => t.stop());
+            return;
+          }
           activeStream = stream;
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
@@ -88,16 +402,18 @@ function CameraCalibrationCanvas({
           setWebcamError(null);
         })
         .catch((err) => {
-          setWebcamError(err.message || 'No Windows USB camera accessible');
-          setUseBrowserWebcam(false);
+          if (!isMounted) return;
+          setWebcamError(err.message || `Camera ${slotNumber} hardware feed not accessible`);
         });
     }
+
     return () => {
+      isMounted = false;
       if (activeStream) {
         activeStream.getTracks().forEach((t) => t.stop());
       }
     };
-  }, [useBrowserWebcam, selectedDeviceId]);
+  }, [useBrowserWebcam, selectedDeviceId, slotNumber, windowsVideoDevices]);
 
   const getNormalizedCoords = (clientX, clientY) => {
     if (!containerRef.current) return null;
@@ -118,7 +434,7 @@ function CameraCalibrationCanvas({
     const targetInfo = CALIBRATION_REFERENCE_TARGETS[points.length];
     const nextPoints = [
       ...points,
-      { x: coords.x, y: coords.y, label: targetInfo.shortLabel }
+      { x: coords.x, y: coords.y, label: targetInfo.shortLabel.replace(/\s+/g, '') }
     ];
     onUpdatePoints(camera.id, nextPoints);
   };
@@ -144,63 +460,71 @@ function CameraCalibrationCanvas({
   const H = 300;
   const projectUserFn = isComplete ? buildBoardHomography(points) : null;
 
-  // Simulated background board projection (represents the physical board seen by the OV9732 camera)
-  const presetPts = CAMERA_PRESET_POINTS[camera.id] || CAMERA_PRESET_POINTS.cam1;
+  // Simulated background board projection computed dynamically from this camera's mountAngleDeg
+  const presetPts = computePerspectivePresetPoints(mountAngleDeg);
   const projectBgFn = buildBoardHomography(presetPts);
+
+  const angleInGap = isAngleInOpenBottom(mountAngleDeg);
+  const angleInBar = isAngleInTopBar(mountAngleDeg);
 
   return (
     <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-900/90 shadow-xl overflow-hidden">
-      {/* Camera Card Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950/60 px-4 py-3">
-        <div className="flex items-center gap-2.5">
+      {/* Fixed Box Header */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-950/80 px-4 py-3">
+        <div className="flex items-center gap-3">
           <div
-            className={`flex h-9 w-9 items-center justify-center rounded-lg border ${
-              isComplete
-                ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-400'
-                : 'border-amber-500/40 bg-amber-500/15 text-amber-400'
-            }`}
+            className="flex h-11 w-11 items-center justify-center rounded-xl font-black text-xl shadow-lg shrink-0"
+            style={{
+              backgroundColor: slotColor || CAMERA_COLORS[slotKey] || '#10b981',
+              color: '#020617'
+            }}
           >
-            <Camera className="h-5 w-5" />
+            {slotNumber}
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-extrabold text-white">
-                {camera.name}
+              <h3 className="text-lg font-black text-white tracking-wide">
+                CAMERA {slotNumber}
               </h3>
-              <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-xs font-bold text-slate-300">
-                {camera.devicePath}
+              <span className="rounded bg-slate-800 border border-slate-700 px-2 py-0.5 font-mono text-[11px] font-bold text-slate-300">
+                Fixed Box #{slotNumber}
               </span>
             </div>
             <p className="text-xs text-slate-400">
               {useBrowserWebcam
-                ? 'Live Windows 10 USB Camera Active'
-                : camera.streamUrl && !streamError
+                ? selectedDeviceId && windowsVideoDevices.length > 0
+                  ? `Hardware: Camera ${windowsVideoDevices.findIndex((d) => d.deviceId === selectedDeviceId) + 1 || slotNumber} (Active USB)`
+                  : `Camera ${slotNumber} Live USB Feed`
+                : camera?.streamUrl && !streamError
                 ? `Live Stream: ${camera.streamUrl}`
-                : diagnostic?.statusLabel || 'Simulated OV9732 Feed (Fallback active)'}
+                : diagnostic?.statusLabel || 'Simulated OV9732 Feed'}
             </p>
           </div>
         </div>
 
         {/* Status Pill */}
-        <span
-          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold ${
-            isComplete
-              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-              : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-          }`}
-        >
-          {isComplete ? (
-            <>
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              <span>4/4 Aligned</span>
-            </>
-          ) : (
-            <>
-              <Crosshair className="h-3.5 w-3.5" />
+        <div className="flex items-center gap-2">
+          {isComplete && isSaved ? (
+            <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/50 bg-emerald-500/20 px-3 py-1 text-xs font-black text-emerald-300 shadow-sm">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+              <span>✓ SAVED (4/4 Points)</span>
+            </span>
+          ) : isComplete ? (
+            <span className="flex items-center gap-1.5 rounded-full border border-amber-500/50 bg-amber-500/20 px-3 py-1 text-xs font-black text-amber-300 animate-pulse">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+              <span>● UNSAVED (4/4 Ready)</span>
+            </span>
+          ) : points.length > 0 ? (
+            <span className="flex items-center gap-1.5 rounded-full border border-sky-500/50 bg-sky-500/20 px-3 py-1 text-xs font-extrabold text-sky-300">
+              <Crosshair className="h-3.5 w-3.5 text-sky-400" />
               <span>{points.length}/4 Points</span>
-            </>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-800/80 px-3 py-1 text-xs font-bold text-slate-400">
+              <span>0/4 Points (Unset)</span>
+            </span>
           )}
-        </span>
+        </div>
       </div>
 
       {/* Prompt Bar for Next Reference Point */}
@@ -233,7 +557,7 @@ function CameraCalibrationCanvas({
         }`}
       >
         {/* 1. Optional Live MJPEG Stream Image if configured */}
-        {camera.streamUrl && !streamError && !useBrowserWebcam && (
+        {camera?.streamUrl && !streamError && !useBrowserWebcam && (
           <img
             src={camera.streamUrl}
             alt={camera.name}
@@ -259,11 +583,40 @@ function CameraCalibrationCanvas({
           className="absolute inset-0 h-full w-full"
         >
           {/* When no live stream or webcam is active, render a realistic dark camera frame of an illuminated dartboard */}
-          {(!camera.streamUrl || streamError) && !useBrowserWebcam && projectBgFn && (
-            <g opacity="0.65">
+          {(!camera?.streamUrl || streamError) && !useBrowserWebcam && projectBgFn && (
+            <g opacity="0.7">
               <rect width={W} height={H} fill="#050811" />
-              {/* Simulated 360 LED light halo */}
-              <circle cx={W / 2} cy={H / 2} r="138" fill="#0f172a" stroke="#1e293b" strokeWidth="4" />
+
+              {/* Simulated 270° Open-Bottom LED Light Ring (open from 4:30 to 7:30) */}
+              <path
+                d={createProjectedArcPath(
+                  projectBgFn,
+                  1.30,
+                  OPEN_BOTTOM_GAP.endDeg,
+                  OPEN_BOTTOM_GAP.startDeg,
+                  W,
+                  H
+                )}
+                fill="none"
+                stroke="#334155"
+                strokeWidth="5"
+                strokeLinecap="round"
+              />
+              <path
+                d={createProjectedArcPath(
+                  projectBgFn,
+                  1.30,
+                  OPEN_BOTTOM_GAP.startDeg,
+                  OPEN_BOTTOM_GAP.endDeg,
+                  W,
+                  H,
+                  20
+                )}
+                fill="none"
+                stroke="#7f1d1d"
+                strokeWidth="2"
+                strokeDasharray="4 4"
+              />
 
               {/* Simulated physical board rings in camera perspective */}
               <path
@@ -314,8 +667,8 @@ function CameraCalibrationCanvas({
                 const outerPt = projectBgFn(Math.cos(rad) * 1.0, Math.sin(rad) * 1.0);
                 const labelAngleRad = ((idx * 18 - 90) * Math.PI) / 180;
                 const labelPt = projectBgFn(
-                  Math.cos(labelAngleRad) * 1.11,
-                  Math.sin(labelAngleRad) * 1.11
+                  Math.cos(labelAngleRad) * 1.12,
+                  Math.sin(labelAngleRad) * 1.12
                 );
 
                 return (
@@ -503,8 +856,13 @@ function CameraCalibrationCanvas({
 
         {/* Camera Feed Top-Left HUD Badge */}
         <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-950/85 px-2.5 py-1 text-[11px] font-bold text-slate-200 backdrop-blur-sm">
-          <span className="h-2 w-2 rounded-full bg-emerald-400" />
-          <span>{camera.position} · OV9732 (Win10)</span>
+          <span
+            className="h-2 w-2 rounded-full"
+            style={{ backgroundColor: slotColor || CAMERA_COLORS[slotKey] || '#10b981' }}
+          />
+          <span>
+            Camera {slotNumber} ({Math.round(normalizeDeg(mountAngleDeg))}°) · {slotPositionTip}
+          </span>
         </div>
       </div>
 
@@ -538,7 +896,7 @@ function CameraCalibrationCanvas({
       </div>
 
       {/* Per-Camera Action Footer */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 bg-slate-900 px-3.5 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 bg-slate-900 px-3.5 py-3">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -552,19 +910,14 @@ function CameraCalibrationCanvas({
           <button
             type="button"
             onClick={() =>
-              onUpdatePoints(
-                camera.id,
-                JSON.parse(JSON.stringify(CAMERA_PRESET_POINTS[camera.id] || CAMERA_PRESET_POINTS.cam1))
-              )
+              onUpdatePoints(camera.id, computePerspectivePresetPoints(mountAngleDeg))
             }
             className="flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-bold text-emerald-300 transition hover:bg-emerald-500/20"
           >
             <Sparkles className="h-3.5 w-3.5" />
             <span>Auto-Align</span>
           </button>
-        </div>
 
-        <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={() => onToggleOverlay(camera.id)}
@@ -581,20 +934,78 @@ function CameraCalibrationCanvas({
           <button
             type="button"
             onClick={() => setShowSettings(!showSettings)}
-            title="Select Windows 10 USB Camera or MJPEG Stream URL"
-            className="rounded-lg border border-slate-700 bg-slate-800 p-1.5 text-slate-300 transition hover:bg-slate-700"
+            title="Mount angle, Windows 10 USB Camera, or MJPEG Stream URL"
+            className={`rounded-lg border p-1.5 transition ${
+              showSettings
+                ? 'border-cyan-500/50 bg-cyan-500/20 text-cyan-300'
+                : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
           >
             <Sliders className="h-3.5 w-3.5" />
           </button>
         </div>
+
+        {/* Dedicated Save Button for this Camera */}
+        <button
+          type="button"
+          onClick={async () => {
+            if (onSaveSingleCamera) {
+              await onSaveSingleCamera(slotKey, camera);
+              setJustSaved(true);
+              setTimeout(() => setJustSaved(false), 2500);
+            }
+          }}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-black shadow-md transition active:scale-95 ${
+            justSaved
+              ? 'border border-emerald-400 bg-emerald-500 text-slate-950 shadow-emerald-500/30'
+              : !isSaved && isComplete
+              ? 'border border-emerald-400 bg-emerald-500 text-slate-950 shadow-emerald-500/30 hover:bg-emerald-400 animate-pulse'
+              : 'border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
+          }`}
+        >
+          <Save className="h-4 w-4" />
+          <span>
+            {justSaved
+              ? `✓ Camera ${slotNumber} Saved!`
+              : `Save Camera ${slotNumber}${points.length === 4 ? '' : ` (${points.length}/4)`}`}
+          </span>
+        </button>
       </div>
 
-      {/* Expandable Windows 10 USB Camera / Stream Settings Drawer */}
+      {/* Expandable Mount Angle & Windows 10 USB Camera / Stream Settings Drawer */}
       {showSettings && (
-        <div className="space-y-2.5 border-t border-slate-800 bg-slate-950 p-3 text-xs">
+        <div className="space-y-3 border-t border-slate-800 bg-slate-950 p-3 text-xs">
+          {/* Fine-Tune Ring Mount Angle */}
+          <div className="space-y-1.5 rounded-lg border border-slate-800 bg-slate-900/70 p-2.5">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-300">
+                Ring Mount Position:
+              </span>
+              <span className="font-mono font-bold text-emerald-300">
+                {angleToClockLabel(mountAngleDeg)} · {Math.round(normalizeDeg(mountAngleDeg))}° (over {angleToNearestSector(mountAngleDeg)})
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="359"
+              step="1"
+              value={Math.round(normalizeDeg(mountAngleDeg))}
+              onChange={(e) => onUpdateMountAngle(camera.id, Number(e.target.value))}
+              className="w-full accent-emerald-400"
+            />
+            {(angleInGap || angleInBar) && (
+              <p className="text-[11px] font-bold text-rose-400">
+                {angleInBar
+                  ? 'Warning: 354°–6° overlaps the 12 o’clock bar — nudge left (~345° toward 5) or right (~15° toward 1).'
+                  : 'Warning: 135°–225° is inside the missing bottom section of your 270° ring.'}
+              </p>
+            )}
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-bold text-slate-300">
-              Windows 10 USB Camera Input:
+              Windows 10 USB Camera Feed:
             </span>
             <button
               type="button"
@@ -611,18 +1022,25 @@ function CameraCalibrationCanvas({
           </div>
 
           {windowsVideoDevices.length > 0 && (
-            <select
-              value={selectedDeviceId}
-              onChange={(e) => setSelectedDeviceId(e.target.value)}
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-emerald-500 focus:outline-none"
-            >
-              <option value="">Default Windows USB Camera</option>
-              {windowsVideoDevices.map((dev, i) => (
-                <option key={dev.deviceId || i} value={dev.deviceId}>
-                  {dev.label || `Windows USB Camera #${i + 1}`}
-                </option>
-              ))}
-            </select>
+            <div>
+              <span className="mb-1 block font-bold text-slate-300">
+                Assign USB Camera Device to Camera {slotNumber}:
+              </span>
+              <select
+                value={selectedDeviceId}
+                onChange={(e) => {
+                  setSelectedDeviceId(e.target.value);
+                  if (onAssignDevice) onAssignDevice(slotKey, e.target.value);
+                }}
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-emerald-500 focus:outline-none"
+              >
+                {windowsVideoDevices.map((dev, i) => (
+                  <option key={dev.deviceId || i} value={dev.deviceId}>
+                    Camera {i + 1} ({dev.label || `USB Video Device #${i + 1}`})
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
 
           {webcamError && (
@@ -635,7 +1053,7 @@ function CameraCalibrationCanvas({
             </span>
             <input
               type="text"
-              value={camera.streamUrl || ''}
+              value={camera?.streamUrl || ''}
               onChange={(e) => {
                 setStreamError(false);
                 onUpdateStreamUrl(camera.id, e.target.value);
@@ -654,19 +1072,27 @@ export default function CalibrationView({
   calibration,
   cameraDiagnostics,
   onSaveCalibration,
+  onSaveSingleCamera,
   onResetCalibration,
   onTestCameras
 }) {
   const [localCal, setLocalCal] = useState(calibration);
   const [saveBanner, setSaveBanner] = useState(null);
   const [isDirty, setIsDirty] = useState(false);
+  const [savedCameras, setSavedCameras] = useState({
+    cam1: true,
+    cam2: true,
+    cam3: true
+  });
   const [windowsVideoDevices, setWindowsVideoDevices] = useState([]);
+  const [assignedDeviceMap, setAssignedDeviceMap] = useState({});
 
   const scanWindowsBrowserCameras = async () => {
     if (navigator.mediaDevices?.enumerateDevices) {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
-        setWindowsVideoDevices(devices.filter((d) => d.kind === 'videoinput'));
+        const videoDevs = devices.filter((d) => d.kind === 'videoinput');
+        setWindowsVideoDevices(videoDevs);
       } catch {
         setWindowsVideoDevices([]);
       }
@@ -688,13 +1114,25 @@ export default function CalibrationView({
     return null;
   }
 
-  const camerasList = ['cam1', 'cam2', 'cam3'].map((id) => localCal.cameras[id]).filter(Boolean);
+  const activeLayoutId = localCal.ringLayout?.id || 'ring270_left5';
+
   const diagnosticsMap = {};
   if (cameraDiagnostics?.cameras) {
     cameraDiagnostics.cameras.forEach((d) => {
       diagnosticsMap[d.id] = d;
     });
   }
+
+  const handleSelectRingLayout = async (layoutId) => {
+    const preset = RING_LAYOUT_PRESETS[layoutId];
+    if (!preset) return;
+    await onResetCalibration(null, 'default', layoutId);
+    setIsDirty(false);
+    setSaveBanner({
+      type: 'success',
+      text: `Switched to ${preset.label} and updated perspective presets in config/calibration.json.`
+    });
+  };
 
   const handleUpdatePoints = (camId, newPoints) => {
     setLocalCal((prev) => ({
@@ -709,6 +1147,7 @@ export default function CalibrationView({
       }
     }));
     setIsDirty(true);
+    setSavedCameras((prev) => ({ ...prev, [camId]: false }));
     setSaveBanner(null);
   };
 
@@ -737,16 +1176,62 @@ export default function CalibrationView({
       }
     }));
     setIsDirty(true);
+    setSavedCameras((prev) => ({ ...prev, [camId]: false }));
   };
 
-  const handleSave = async () => {
+  const handleUpdateMountAngle = (camId, angleDeg) => {
+    const normAngle = normalizeDeg(angleDeg);
+    const clock = angleToClockLabel(normAngle);
+    const sector = angleToNearestSector(normAngle);
+    const camNum = camId === 'cam1' ? 1 : camId === 'cam2' ? 2 : 3;
+
+    setLocalCal((prev) => ({
+      ...prev,
+      cameras: {
+        ...prev.cameras,
+        [camId]: {
+          ...prev.cameras[camId],
+          mountAngleDeg: normAngle,
+          position: `${clock} (over ${sector})`,
+          name: `Camera ${camNum}`,
+          points: computePerspectivePresetPoints(normAngle),
+          calibrated: true
+        }
+      }
+    }));
+    setIsDirty(true);
+    setSavedCameras((prev) => ({ ...prev, [camId]: false }));
+    setSaveBanner(null);
+  };
+
+  const handleAssignDevice = (camId, deviceId) => {
+    setAssignedDeviceMap((prev) => ({ ...prev, [camId]: deviceId }));
+  };
+
+  const handleSaveAll = async () => {
     const result = await onSaveCalibration(localCal);
     setIsDirty(false);
+    setSavedCameras({ cam1: true, cam2: true, cam3: true });
     setSaveBanner({
       type: 'success',
       text:
         result?.syncResult?.message ||
-        'Saved to config/calibration.json and synced to OpenDartboard!'
+        `✓ All 3 cameras (Camera 1, Camera 2, Camera 3) saved to config/calibration.json at ${new Date().toLocaleTimeString()}!`
+    });
+  };
+
+  const handleSaveCamera = async (camId) => {
+    const camNum = camId === 'cam1' ? 1 : camId === 'cam2' ? 2 : 3;
+    const camData = localCal.cameras?.[camId];
+    if (onSaveSingleCamera) {
+      await onSaveSingleCamera(camId, camData);
+    } else {
+      await onSaveCalibration(localCal);
+    }
+    setSavedCameras((prev) => ({ ...prev, [camId]: true }));
+    setSaveBanner({
+      type: 'success',
+      text: `✓ Camera ${camNum} calibration saved successfully to config/calibration.json at ${new Date().toLocaleTimeString()}!`
     });
   };
 
@@ -757,8 +1242,8 @@ export default function CalibrationView({
       type: 'info',
       text:
         preset === 'default'
-          ? 'Restored default 4-point calibration presets for all 3 cameras.'
-          : 'Cleared all calibration points across all 3 cameras. Click 4 points on each camera to recalibrate.'
+          ? 'Restored 270° ring perspective presets for Camera 1, Camera 2, and Camera 3.'
+          : 'Cleared all calibration points across Camera 1, 2, and 3. Click the 4 Double-ring intersections on each camera to calibrate.'
     });
   };
 
@@ -767,48 +1252,56 @@ export default function CalibrationView({
     await onTestCameras();
     setSaveBanner({
       type: 'info',
-      text: `Scanned Windows 10 USB cameras (${windowsVideoDevices.length} browser videoinput device(s) found; 3 camera slots ready).`
+      text: `Scanned Windows 10 USB cameras (${windowsVideoDevices.length} browser videoinput device(s) found; Camera 1, Camera 2, Camera 3 ready).`
     });
   };
 
+  const FIXED_SLOTS = [
+    { number: 1, key: 'cam1', title: 'Camera 1', color: '#10b981', positionTip: 'Top (10–12 o\'clock)' },
+    { number: 2, key: 'cam2', title: 'Camera 2', color: '#38bdf8', positionTip: 'Right (2–4 o\'clock)' },
+    { number: 3, key: 'cam3', title: 'Camera 3', color: '#f59e0b', positionTip: 'Left (6–8 o\'clock)' }
+  ];
+
+  const camerasList = FIXED_SLOTS.map((s) => localCal.cameras?.[s.key]).filter(Boolean);
+
   return (
     <div className="mx-auto max-w-[1800px] space-y-5 px-4 py-5 lg:px-6">
-      {/* Top Calibration Control Bar */}
+      {/* Top Calibration Control Bar & Status */}
       <section className="rounded-2xl border border-slate-800 bg-slate-900/85 p-5 shadow-xl">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2.5">
               <span className="rounded-lg bg-emerald-500/20 px-2.5 py-1 text-xs font-black uppercase tracking-wider text-emerald-300">
-                3-CAMERA VISION ALIGNMENT
+                3 FIXED BOXES · FORCED 1, 2, 3 ALIGNMENT
               </span>
               <h2 className="text-xl font-black text-white sm:text-2xl">
-                OV9732 4-Point Board Calibration (Windows 10)
+                Camera Calibration (Camera 1 → Camera 2 → Camera 3)
               </h2>
             </div>
             <p className="mt-1 text-xs text-slate-300 sm:text-sm">
-              Click the <strong className="text-white">4 Double-ring intersections</strong> in clockwise order on each camera feed:{' '}
-              <span className="font-mono font-bold text-emerald-400">#1 (20/1 Top)</span> →{' '}
-              <span className="font-mono font-bold text-sky-400">#2 (6/10 Right)</span> →{' '}
-              <span className="font-mono font-bold text-amber-400">#3 (3/19 Bottom)</span> →{' '}
-              <span className="font-mono font-bold text-rose-400">#4 (11/14 Left)</span>.
+              Each camera is forced into a fixed box below:{' '}
+              <strong className="text-emerald-400">Box 1 (Camera 1)</strong> →{' '}
+              <strong className="text-sky-400">Box 2 (Camera 2)</strong> →{' '}
+              <strong className="text-amber-400">Box 3 (Camera 3)</strong>.{' '}
+              Click the <strong className="text-white">4 Double-ring intersections</strong> in clockwise order (#1 20/1, #2 6/10, #3 3/19, #4 11/14), then click <strong className="text-white">Save Camera</strong> in each box.
             </p>
           </div>
 
-          {/* Global Calibration Buttons: Scan USB Cameras, Reset Points, Restore Presets, Save Calibration */}
+          {/* Action buttons */}
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={handleScanCameras}
-              className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-bold text-slate-200 transition hover:bg-slate-700"
+              className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-200 transition hover:bg-slate-700"
             >
               <Camera className="h-4 w-4 text-cyan-400" />
-              <span>Scan Windows USB Cameras</span>
+              <span>Scan USB Cameras</span>
             </button>
 
             <button
               type="button"
               onClick={() => handleResetAll('empty')}
-              className="flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-500/15 px-4 py-2.5 text-sm font-extrabold text-rose-200 transition hover:bg-rose-500/25"
+              className="flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-500/15 px-3.5 py-2.5 text-xs font-extrabold text-rose-200 transition hover:bg-rose-500/25"
             >
               <RotateCcw className="h-4 w-4" />
               <span>Reset Points</span>
@@ -817,19 +1310,19 @@ export default function CalibrationView({
             <button
               type="button"
               onClick={() => handleResetAll('default')}
-              className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-bold text-slate-200 transition hover:bg-slate-700"
+              className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2.5 text-xs font-bold text-slate-200 transition hover:bg-slate-700"
             >
               <Sparkles className="h-4 w-4 text-amber-400" />
-              <span>Load Demo Points</span>
+              <span>Load Presets</span>
             </button>
 
             <button
               type="button"
-              onClick={handleSave}
+              onClick={handleSaveAll}
               className="flex items-center gap-2 rounded-xl border border-emerald-400 bg-emerald-500 px-5 py-2.5 text-sm font-black text-slate-950 shadow-lg shadow-emerald-500/25 transition hover:bg-emerald-400 active:scale-95 sm:text-base"
             >
               <Save className="h-5 w-5" />
-              <span>Save Calibration</span>
+              <span>Save All Cameras (1, 2, 3)</span>
               {isDirty && (
                 <span className="ml-1 rounded-full bg-slate-950 px-2 py-0.5 text-[10px] font-black text-emerald-300">
                   Unsaved
@@ -839,13 +1332,71 @@ export default function CalibrationView({
           </div>
         </div>
 
+        {/* 3-Camera Quick Status Pill Readout */}
+        <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+          {FIXED_SLOTS.map((slot) => {
+            const cam = localCal.cameras?.[slot.key];
+            const pts = Array.isArray(cam?.points) ? cam.points : [];
+            const isCamSaved = savedCameras[slot.key] !== false && pts.length === 4;
+            const has4 = pts.length === 4;
+
+            return (
+              <div
+                key={slot.key}
+                className={`flex items-center justify-between rounded-xl border p-3 ${
+                  has4 && isCamSaved
+                    ? 'border-emerald-500/40 bg-emerald-950/30 text-emerald-200'
+                    : has4 && !isCamSaved
+                    ? 'border-amber-500/40 bg-amber-950/30 text-amber-200'
+                    : 'border-slate-800 bg-slate-950/50 text-slate-400'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className="flex h-6 w-6 items-center justify-center rounded-lg font-black text-xs"
+                    style={{ backgroundColor: slot.color, color: '#020617' }}
+                  >
+                    {slot.number}
+                  </span>
+                  <div>
+                    <div className="font-extrabold text-white text-xs">
+                      {slot.title} ({slot.positionTip})
+                    </div>
+                    <div className="text-[11px] opacity-80">
+                      {pts.length}/4 Points Placed
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  {has4 && isCamSaved ? (
+                    <span className="flex items-center gap-1 rounded bg-emerald-500/20 px-2 py-0.5 text-[11px] font-black text-emerald-300">
+                      <CheckCircle2 className="h-3 w-3" />
+                      <span>SAVED</span>
+                    </span>
+                  ) : has4 && !isCamSaved ? (
+                    <span className="flex items-center gap-1 rounded bg-amber-500/20 px-2 py-0.5 text-[11px] font-black text-amber-300 animate-pulse">
+                      <AlertTriangle className="h-3 w-3" />
+                      <span>UNSAVED</span>
+                    </span>
+                  ) : (
+                    <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-bold text-slate-400">
+                      {pts.length > 0 ? `${pts.length}/4 PTS` : 'NOT CALIBRATED'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
         {/* Save / Sync Feedback Banner */}
         {saveBanner && (
           <div
             className={`mt-4 flex items-center justify-between rounded-xl border px-4 py-3 text-sm font-bold ${
               saveBanner.type === 'success'
-                ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-200'
-                : 'border-sky-500/50 bg-sky-950/60 text-sky-200'
+                ? 'border-emerald-500/50 bg-emerald-950/80 text-emerald-200'
+                : 'border-sky-500/50 bg-sky-950/80 text-sky-200'
             }`}
           >
             <div className="flex items-center gap-2">
@@ -859,19 +1410,48 @@ export default function CalibrationView({
         )}
       </section>
 
-      {/* 3-PANEL CAMERA CALIBRATION GRID: Camera 1 (10 o'clock), Camera 2 (2 o'clock), Camera 3 (6 o'clock) */}
+      {/* Interactive 270° Open-Bottom Ring Light Mounting Guide & Top-Camera Side Selector */}
+      <RingMountDiagram
+        cameras={camerasList}
+        activeLayoutId={activeLayoutId}
+        onSelectLayout={handleSelectRingLayout}
+      />
+
+      {/* 3 FIXED BOXES: CAMERA 1 -> CAMERA 2 -> CAMERA 3 */}
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {camerasList.map((cam) => (
-          <CameraCalibrationCanvas
-            key={cam.id}
-            camera={cam}
-            diagnostic={diagnosticsMap[cam.id]}
-            windowsVideoDevices={windowsVideoDevices}
-            onUpdatePoints={handleUpdatePoints}
-            onToggleOverlay={handleToggleOverlay}
-            onUpdateStreamUrl={handleUpdateStreamUrl}
-          />
-        ))}
+        {FIXED_SLOTS.map((slot) => {
+          const cam = localCal.cameras?.[slot.key] || {
+            id: slot.key,
+            name: slot.title,
+            position: slot.positionTip,
+            points: []
+          };
+          const pts = Array.isArray(cam?.points) ? cam.points : [];
+          const isCamSaved = savedCameras[slot.key] !== false && pts.length === 4;
+
+          return (
+            <CameraCalibrationCanvas
+              key={slot.key}
+              slotNumber={slot.number}
+              slotKey={slot.key}
+              slotTitle={slot.title}
+              slotColor={slot.color}
+              slotPositionTip={slot.positionTip}
+              camera={cam}
+              diagnostic={diagnosticsMap[slot.key]}
+              windowsVideoDevices={windowsVideoDevices}
+              assignedDeviceId={assignedDeviceMap[slot.key]}
+              onAssignDevice={handleAssignDevice}
+              onUpdatePoints={handleUpdatePoints}
+              onToggleOverlay={handleToggleOverlay}
+              onUpdateStreamUrl={handleUpdateStreamUrl}
+              onUpdateMountAngle={handleUpdateMountAngle}
+              onSaveSingleCamera={handleSaveCamera}
+              isSaved={isCamSaved}
+              savedTimestamp={cam.savedAt}
+            />
+          );
+        })}
       </section>
 
       {/* Bottom Reference Legend & Persistence Info */}

@@ -1,5 +1,16 @@
 {
-  "updatedAt": "2026-11-21T23:17:05.198Z",
+  "updatedAt": "2026-11-22T03:15:00.844Z",
+  "ringLayout": {
+    "id": "ring270_left5",
+    "ringType": "270-open-bottom",
+    "topBarAt12": true,
+    "topCameraSide": "left-5",
+    "openBottomGapDeg": {
+      "start": 135,
+      "end": 225
+    },
+    "label": "270� Open-Bottom Ring � Top Left of Bar (toward 5)"
+  },
   "boardReferencePoints": [
     {
       "id": "p1",
@@ -41,96 +52,102 @@
   "cameras": {
     "cam1": {
       "id": "cam1",
-      "name": "Camera 1 (10 o'clock)",
-      "position": "10 o'clock",
+      "name": "Camera 1",
+      "position": "11:30 (toward 5)",
+      "mountAngleDeg": 345,
       "devicePath": "USB Camera 0",
       "streamUrl": "",
       "calibrated": true,
       "showOverlay": true,
       "points": [
         {
-          "x": 0.525,
-          "y": 0.165,
+          "x": 0.235,
+          "y": 0.2744,
           "label": "20/1"
         },
         {
-          "x": 0.835,
-          "y": 0.525,
+          "x": 0.6025,
+          "y": 0.225,
           "label": "6/10"
         },
         {
-          "x": 0.475,
-          "y": 0.835,
+          "x": 0.7385,
+          "y": 0.6066,
           "label": "3/19"
         },
         {
-          "x": 0.165,
-          "y": 0.475,
+          "x": 0.1855,
+          "y": 0.6843,
           "label": "11/14"
         }
-      ]
+      ],
+      "savedAt": "2026-11-22T03:10:58.854Z"
     },
     "cam2": {
       "id": "cam2",
-      "name": "Camera 2 (2 o'clock)",
-      "position": "2 o'clock",
+      "name": "Camera 2",
+      "position": "3:40 (over 10)",
+      "mountAngleDeg": 110,
       "devicePath": "USB Camera 1",
       "streamUrl": "",
       "calibrated": true,
       "showOverlay": true,
       "points": [
         {
-          "x": 0.53,
-          "y": 0.17,
+          "x": 0.7473,
+          "y": 0.3922,
           "label": "20/1"
         },
         {
-          "x": 0.83,
-          "y": 0.53,
+          "x": 0.629,
+          "y": 0.7951,
           "label": "6/10"
         },
         {
-          "x": 0.47,
-          "y": 0.83,
+          "x": 0.1767,
+          "y": 0.5548,
           "label": "3/19"
         },
         {
-          "x": 0.17,
-          "y": 0.47,
+          "x": 0.4134,
+          "y": 0.2744,
           "label": "11/14"
         }
-      ]
+      ],
+      "savedAt": "2026-11-22T03:10:58.854Z"
     },
     "cam3": {
       "id": "cam3",
-      "name": "Camera 3 (6 o'clock)",
-      "position": "6 o'clock",
+      "name": "Camera 3",
+      "position": "7:50 (over 16)",
+      "mountAngleDeg": 235,
       "devicePath": "USB Camera 2",
       "streamUrl": "",
       "calibrated": true,
       "showOverlay": true,
       "points": [
         {
-          "x": 0.522,
-          "y": 0.168,
+          "x": 0.4028,
+          "y": 0.8115,
           "label": "20/1"
         },
         {
-          "x": 0.832,
-          "y": 0.522,
+          "x": 0.2527,
+          "y": 0.371,
           "label": "6/10"
         },
         {
-          "x": 0.478,
-          "y": 0.832,
+          "x": 0.5936,
+          "y": 0.2297,
           "label": "3/19"
         },
         {
-          "x": 0.168,
-          "y": 0.478,
+          "x": 0.8551,
+          "y": 0.5171,
           "label": "11/14"
         }
-      ]
+      ],
+      "savedAt": "2026-11-22T03:10:58.854Z"
     }
   }
 }

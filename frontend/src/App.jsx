@@ -4,11 +4,15 @@ import TopNavBar from './components/TopNavBar';
 import LiveScoreView from './components/LiveScoreView';
 import CalibrationView from './components/CalibrationView';
 import SetupWizardModal from './components/SetupWizardModal';
+import DebugView from './components/DebugView';
+import DevPinModal from './components/DevPinModal';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('live'); // 'live' | 'calibration'
+  const [activeTab, setActiveTab] = useState('live'); // 'live' | 'calibration' | 'debug'
   const [simulateMode, setSimulateMode] = useState(true);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isDevUnlocked, setIsDevUnlocked] = useState(false);
+  const [isDevPinModalOpen, setIsDevPinModalOpen] = useState(false);
 
   const [appState, setAppState] = useState({
     turnNumber: 1,
@@ -172,11 +176,24 @@ export default function App() {
     return data;
   };
 
-  const handleResetCalibration = async (cameraId = null, preset = 'empty') => {
+  const handleSaveSingleCamera = async (cameraId, cameraData) => {
+    const res = await fetch(`/api/calibration/camera/${cameraId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cameraData)
+    });
+    const data = await res.json();
+    if (data.state) {
+      setAppState((prev) => ({ ...prev, ...data.state }));
+    }
+    return data;
+  };
+
+  const handleResetCalibration = async (cameraId = null, preset = 'empty', layoutId = null) => {
     const res = await fetch('/api/calibration/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cameraId, preset })
+      body: JSON.stringify({ cameraId, preset, layoutId })
     });
     const data = await res.json();
     if (data.state) {
@@ -194,6 +211,24 @@ export default function App() {
 
   const handleReconnectOpenDartboard = async () => {
     await fetch('/api/opendartboard/reconnect', { method: 'POST' });
+  };
+
+  const handleOpenDevPinModal = () => {
+    if (isDevUnlocked) {
+      setActiveTab('debug');
+    } else {
+      setIsDevPinModalOpen(true);
+    }
+  };
+
+  const handleDevPinSuccess = () => {
+    setIsDevUnlocked(true);
+    setActiveTab('debug');
+  };
+
+  const handleLockDevMode = () => {
+    setIsDevUnlocked(false);
+    setActiveTab('live');
   };
 
   // Count how many cameras have all 4 calibration points placed
@@ -214,6 +249,9 @@ export default function App() {
         onToggleSimulateMode={() => setSimulateMode((v) => !v)}
         onOpenHelpWizard={() => setIsHelpOpen(true)}
         calibratedCamerasCount={calibratedCamerasCount}
+        isDevUnlocked={isDevUnlocked}
+        onOpenDevPinModal={handleOpenDevPinModal}
+        onLockDevMode={handleLockDevMode}
       />
 
       <main className="flex-1">
@@ -230,13 +268,25 @@ export default function App() {
             onUndoLastDart={handleUndoLastDart}
             onNextTurn={handleNextTurn}
             onClearAllLogs={handleClearAllLogs}
+            onOpenDevPinModal={handleOpenDevPinModal}
+            isDevUnlocked={isDevUnlocked}
           />
-        ) : (
+        ) : activeTab === 'calibration' ? (
           <CalibrationView
             calibration={appState.calibration}
             cameraDiagnostics={appState.cameraDiagnostics}
             onSaveCalibration={handleSaveCalibration}
+            onSaveSingleCamera={handleSaveSingleCamera}
             onResetCalibration={handleResetCalibration}
+            onTestCameras={handleTestCameras}
+          />
+        ) : (
+          <DebugView
+            calibration={appState.calibration}
+            cameraDiagnostics={appState.cameraDiagnostics}
+            openDartboardStatus={appState.openDartboard}
+            onExitDevMode={handleLockDevMode}
+            onSwitchToCalibration={() => setActiveTab('calibration')}
             onTestCameras={handleTestCameras}
           />
         )}
@@ -254,6 +304,12 @@ export default function App() {
           setActiveTab('live');
           handleSimulateDart(payload);
         }}
+      />
+
+      <DevPinModal
+        isOpen={isDevPinModalOpen}
+        onClose={() => setIsDevPinModalOpen(false)}
+        onSuccess={handleDevPinSuccess}
       />
     </div>
   );

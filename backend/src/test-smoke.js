@@ -31,15 +31,38 @@ async function runTests() {
   assert.strictEqual(miss.score, 0);
 
   console.log('2. Testing calibrationStore & cameraManager...');
+  const resetLeft5 = resetCalibrationPoints(null, 'default', 'ring270_left5');
+  assert.strictEqual(resetLeft5.ringLayout.id, 'ring270_left5');
+  assert.strictEqual(resetLeft5.cameras.cam1.mountAngleDeg, 345);
+  assert.strictEqual(resetLeft5.cameras.cam2.mountAngleDeg, 110);
+  assert.strictEqual(resetLeft5.cameras.cam3.mountAngleDeg, 235);
+  assert.strictEqual(resetLeft5.cameras.cam1.points.length, 4);
+
+  const diagLeft5 = inspectCameras(resetLeft5);
+  assert.strictEqual(diagLeft5.cameras.length, 3);
+  assert.strictEqual(diagLeft5.triangulation.clearsOpenBottom, true);
+  assert.strictEqual(diagLeft5.triangulation.clearsTopBar, true);
+  assert.strictEqual(diagLeft5.triangulation.optimalTriangulation, true);
+
+  const resetRight1 = resetCalibrationPoints(null, 'default', 'ring270_right1');
+  assert.strictEqual(resetRight1.ringLayout.id, 'ring270_right1');
+  assert.strictEqual(resetRight1.cameras.cam1.mountAngleDeg, 15);
+  assert.strictEqual(resetRight1.cameras.cam2.mountAngleDeg, 125);
+  assert.strictEqual(resetRight1.cameras.cam3.mountAngleDeg, 250);
+
+  const diagRight1 = inspectCameras(resetRight1);
+  assert.strictEqual(diagRight1.triangulation.clearsOpenBottom, true);
+  assert.strictEqual(diagRight1.triangulation.clearsTopBar, true);
+  assert.strictEqual(diagRight1.triangulation.optimalTriangulation, true);
+
+  // Restore default ring270_left5 layout
+  const resetDefault = resetCalibrationPoints(null, 'default', 'ring270_left5');
   const cal = loadCalibration();
   assert(cal.cameras.cam1 && cal.cameras.cam2 && cal.cameras.cam3);
   assert.strictEqual(cal.cameras.cam1.points.length, 4);
 
   const saved = saveCalibration(cal);
   assert(saved.updatedAt);
-
-  const resetDefault = resetCalibrationPoints(null, 'default');
-  assert.strictEqual(resetDefault.cameras.cam1.points.length, 4);
 
   const camDiag = inspectCameras(resetDefault);
   assert.strictEqual(camDiag.cameras.length, 3);

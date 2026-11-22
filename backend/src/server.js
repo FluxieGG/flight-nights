@@ -7,7 +7,7 @@ const cors = require('cors');
 const { Server: SocketIOServer } = require('socket.io');
 
 const { parseDartPayload } = require('./dartParser');
-const { loadCalibration, saveCalibration, resetCalibrationPoints, CONFIG_PATH } = require('./calibrationStore');
+const { loadCalibration, saveCalibration, saveSingleCamera, resetCalibrationPoints, CONFIG_PATH } = require('./calibrationStore');
 const { inspectCameras } = require('./cameraManager');
 const { OpenDartboardClient } = require('./openDartboardClient');
 
@@ -238,10 +238,35 @@ app.post('/api/calibration', (req, res) => {
   }
 });
 
+app.post('/api/calibration/camera/:id', (req, res) => {
+  try {
+    const cameraId = req.params.id;
+    const cameraData = req.body || {};
+    calibrationState = saveSingleCamera(cameraId, cameraData);
+    const syncResult = odbClient.sendCalibration(calibrationState);
+    const fullState = getFullState();
+    io.emit('calibration:updated', {
+      calibration: calibrationState,
+      savedCameraId: cameraId,
+      syncResult,
+      state: fullState
+    });
+    res.json({
+      ok: true,
+      cameraId,
+      calibration: calibrationState,
+      syncResult,
+      state: fullState
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.post('/api/calibration/reset', (req, res) => {
   try {
-    const { cameraId = null, preset = 'empty' } = req.body || {};
-    calibrationState = resetCalibrationPoints(cameraId, preset);
+    const { cameraId = null, preset = 'empty', layoutId = null } = req.body || {};
+    calibrationState = resetCalibrationPoints(cameraId, preset, layoutId);
     const syncResult = odbClient.sendCalibration(calibrationState);
     const fullState = getFullState();
     io.emit('calibration:updated', {
@@ -323,9 +348,30 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('calibration:reset', ({ cameraId = null, preset = 'empty' } = {}, ack) => {
+  socket.on('calibration:save_camera', ({ cameraId, cameraData } = {}, ack) => {
     try {
-      calibrationState = resetCalibrationPoints(cameraId, preset);
+      calibrationState = saveSingleCamera(cameraId, cameraData);
+      const syncResult = odbClient.sendCalibration(calibrationState);
+      const fullState = getFullState();
+      io.emit('calibration:updated', {
+        calibration: calibrationState,
+        savedCameraId: cameraId,
+        syncResult,
+        state: fullState
+      });
+      if (typeof ack === 'function') {
+        ack({ ok: true, cameraId, calibration: calibrationState, syncResult });
+      }
+    } catch (err) {
+      if (typeof ack === 'function') {
+        ack({ ok: false, error: err.message });
+      }
+    }
+  });
+
+  socket.on('calibration:reset', ({ cameraId = null, preset = 'empty', layoutId = null } = {}, ack) => {
+    try {
+      calibrationState = resetCalibrationPoints(cameraId, preset, layoutId);
       const syncResult = odbClient.sendCalibration(calibrationState);
       const fullState = getFullState();
       io.emit('calibration:updated', {

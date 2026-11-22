@@ -6,7 +6,10 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
-  FlaskConical
+  FlaskConical,
+  Cpu,
+  Lock,
+  Unlock
 } from 'lucide-react';
 
 export default function TopNavBar({
@@ -17,7 +20,10 @@ export default function TopNavBar({
   simulateMode,
   onToggleSimulateMode,
   onOpenHelpWizard,
-  calibratedCamerasCount
+  calibratedCamerasCount,
+  isDevUnlocked,
+  onOpenDevPinModal,
+  onLockDevMode
 }) {
   const isConnected = openDartboardStatus?.connected;
   const wsUrl = openDartboardStatus?.url || 'ws://localhost:13520';
@@ -83,10 +89,51 @@ export default function TopNavBar({
               {calibratedCamerasCount}/3
             </span>
           </button>
+
+          {isDevUnlocked && (
+            <button
+              type="button"
+              onClick={() => onSelectTab('debug')}
+              className={`flex items-center gap-2.5 rounded-lg px-4 py-2.5 text-sm font-bold transition-all sm:text-base ${
+                activeTab === 'debug'
+                  ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+                  : 'text-purple-300 hover:bg-slate-800 hover:text-purple-200'
+              }`}
+            >
+              <Cpu className="h-5 w-5 text-purple-300" />
+              <span>Dev Debug Screen</span>
+              <span className="rounded bg-purple-950 px-1.5 py-0.5 text-[10px] font-black uppercase text-purple-200">
+                0161
+              </span>
+            </button>
+          )}
         </nav>
 
-        {/* Right Status Badges & Prominent Help Button */}
+        {/* Right Status Badges & Action Buttons */}
         <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+          {/* Dev Mode Button */}
+          <button
+            type="button"
+            onClick={isDevUnlocked ? () => onSelectTab('debug') : onOpenDevPinModal}
+            className={`flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold transition sm:text-sm ${
+              activeTab === 'debug'
+                ? 'border-purple-400 bg-purple-600 text-white shadow-lg shadow-purple-600/30'
+                : isDevUnlocked
+                ? 'border-purple-500/40 bg-purple-500/15 text-purple-300 hover:bg-purple-500/25'
+                : 'border-slate-800 bg-slate-900 text-slate-300 hover:border-purple-500/40 hover:text-purple-300'
+            }`}
+          >
+            {isDevUnlocked ? (
+              <Unlock className="h-4 w-4 text-purple-400" />
+            ) : (
+              <Lock className="h-4 w-4 text-slate-400" />
+            )}
+            <span>Dev Button</span>
+            <span className="rounded bg-slate-950 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-400">
+              PIN 0161
+            </span>
+          </button>
+
           {/* OpenDartboard Connection Status Indicator */}
           <div
             title={`Target daemon: ${wsUrl} (Auto-retry every 3s)`}

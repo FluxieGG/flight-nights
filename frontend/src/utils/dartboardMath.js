@@ -15,6 +15,41 @@ export const BOARD_RADII = {
   BOARD_EDGE: 1.240
 };
 
+// Physical constraints for a 270° open-bottom ring light with a top mounting bar at 12 o'clock
+export const OPEN_BOTTOM_GAP = { startDeg: 135, endDeg: 225 }; // ~4:30 to ~7:30 (no bottom ring)
+export const TOP_BAR_ZONE = { startDeg: 354, endDeg: 6 };      // 12 o'clock bar directly over 20
+
+export const RING_LAYOUT_PRESETS = {
+  ring270_left5: {
+    id: 'ring270_left5',
+    ringType: '270-open-bottom',
+    topBarAt12: true,
+    topCameraSide: 'left-5',
+    shortLabel: 'Top-Left (toward 5)',
+    label: '270° Open-Bottom Ring · Top Left of Bar (toward 5)',
+    summary: 'Cam 1 at ~11:30 (toward 5) · Cam 2 at ~3:40 (over 10) · Cam 3 at ~7:50 (over 16)',
+    cameras: {
+      cam1: { name: 'Camera 1', position: '11:30 (toward 5)', mountAngleDeg: 345, color: '#10b981' },
+      cam2: { name: 'Camera 2', position: '3:40 (over 10)', mountAngleDeg: 110, color: '#38bdf8' },
+      cam3: { name: 'Camera 3', position: '7:50 (over 16)', mountAngleDeg: 235, color: '#f59e0b' }
+    }
+  },
+  ring270_right1: {
+    id: 'ring270_right1',
+    ringType: '270-open-bottom',
+    topBarAt12: true,
+    topCameraSide: 'right-1',
+    shortLabel: 'Top-Right (toward 1)',
+    label: '270° Open-Bottom Ring · Top Right of Bar (toward 1)',
+    summary: 'Cam 1 at ~12:30 (toward 1) · Cam 2 at ~4:10 (over 15) · Cam 3 at ~8:20 (over 8)',
+    cameras: {
+      cam1: { name: 'Camera 1', position: '12:30 (toward 1)', mountAngleDeg: 15, color: '#10b981' },
+      cam2: { name: 'Camera 2', position: '4:10 (over 15)', mountAngleDeg: 125, color: '#38bdf8' },
+      cam3: { name: 'Camera 3', position: '8:20 (over 8)', mountAngleDeg: 250, color: '#f59e0b' }
+    }
+  }
+};
+
 // The 4 canonical calibration reference points on the outer Double ring:
 // 1. 20/1 intersection = +9 deg from 12 o'clock
 // 2. 6/10 intersection = +99 deg from 12 o'clock
@@ -51,6 +86,119 @@ export const CALIBRATION_REFERENCE_TARGETS = [
   }
 ];
 
+export function normalizeDeg(deg) {
+  return ((deg % 360) + 360) % 360;
+}
+
+export function isAngleInOpenBottom(deg) {
+  const a = normalizeDeg(deg);
+  return a > OPEN_BOTTOM_GAP.startDeg && a < OPEN_BOTTOM_GAP.endDeg;
+}
+
+export function isAngleInTopBar(deg) {
+  const a = normalizeDeg(deg);
+  return a >= TOP_BAR_ZONE.startDeg || a <= TOP_BAR_ZONE.endDeg;
+}
+
+export function angleToNearestSector(deg) {
+  const a = normalizeDeg(deg);
+  const idx = Math.round(a / 18) % 20;
+  return BOARD_SECTORS[idx];
+}
+
+export function angleToClockLabel(deg) {
+  const a = normalizeDeg(deg);
+  const totalMinutes = Math.round((a / 360) * 12 * 60) % 720;
+  const rawHour = Math.floor(totalMinutes / 60);
+  const hour = rawHour === 0 ? 12 : rawHour;
+  const minute = Math.round((totalMinutes % 60) / 5) * 5;
+  if (minute === 60) {
+    const nextHour = hour === 12 ? 1 : hour + 1;
+    return `${nextHour}:00`;
+  }
+  return `${hour}:${String(minute).padStart(2, '0')}`;
+}
+
+export function computeTriangulationMetrics(angles) {
+  const normalized = angles.map((a) => normalizeDeg(a));
+  const sorted = [...normalized].sort((a, b) => a - b);
+  if (sorted.length !== 3) {
+    return { gapsDeg: [], minGapDeg: 0, maxGapDeg: 0, clearsOpenBottom: false, clearsTopBar: false, isOptimal: false };
+  }
+  const gapsDeg = [
+    Math.round(sorted[1] - sorted[0]),
+    Math.round(sorted[2] - sorted[1]),
+    Math.round(360 - sorted[2] + sorted[0])
+  ];
+  const minGapDeg = Math.min(...gapsDeg);
+  const maxGapDeg = Math.max(...gapsDeg);
+  const clearsOpenBottom = normalized.every((a) => !isAngleInOpenBottom(a));
+  const clearsTopBar = normalized.every((a) => !isAngleInTopBar(a));
+  return {
+    gapsDeg,
+    minGapDeg,
+    maxGapDeg,
+    clearsOpenBottom,
+    clearsTopBar,
+    isOptimal: minGapDeg >= 95 && maxGapDeg <= 145 && clearsOpenBottom && clearsTopBar
+  };
+}
+
+/**
+ * Projects the 4 canonical outer-double-ring intersections (20/1, 6/10, 3/19, 11/14)
+ * from a 3D camera mounted on the ring light at `mountAngleDeg` (0 = 12 o'clock, clockwise)
+ * onto a normalized 4:3 camera image [0..1] x [0..1].
+ */
+export function computePerspectivePresetPoints(mountAngleDeg = 345) {
+  const theta = (normalizeDeg(mountAngleDeg) * Math.PI) / 180;
+  const Rc = 1.35;
+  const Zc = 2.6;
+  const fy = 0.88;
+  const fx = fy / (4 / 3);
+
+  const Cx = Rc * Math.sin(theta);
+  const Cy = -Rc * Math.cos(theta);
+  const Cz = Zc;
+
+  const fLen = Math.hypot(Cx, Cy, Cz);
+  const f = { x: -Cx / fLen, y: -Cy / fLen, z: -Cz / fLen };
+
+  const rx = -f.z;
+  const ry = 0;
+  const rz = f.x;
+  const rLen = Math.hypot(rx, ry, rz) || 1;
+  const r = { x: rx / rLen, y: ry / rLen, z: rz / rLen };
+
+  const d = {
+    x: r.y * f.z - r.z * f.y,
+    y: r.z * f.x - r.x * f.z,
+    z: r.x * f.y - r.y * f.x
+  };
+
+  return CALIBRATION_REFERENCE_TARGETS.map((target) => {
+    const rad = ((target.angleDeg - 90) * Math.PI) / 180;
+    const bx = Math.cos(rad);
+    const by = Math.sin(rad);
+
+    const vx = bx - Cx;
+    const vy = by - Cy;
+    const vz = 0 - Cz;
+
+    const xCam = vx * r.x + vy * r.y + vz * r.z;
+    const yCam = vx * d.x + vy * d.y + vz * d.z;
+    const zCam = Math.max(0.2, vx * f.x + vy * f.y + vz * f.z);
+
+    const u = Math.max(0.05, Math.min(0.95, 0.5 + fx * (xCam / zCam)));
+    const v = Math.max(0.05, Math.min(0.95, 0.5 + fy * (yCam / zCam)));
+
+    return {
+      x: Number(u.toFixed(4)),
+      y: Number(v.toFixed(4)),
+      label: target.shortLabel.replace(/\s+/g, '')
+    };
+  });
+}
+
 /**
  * Converts polar angle (0 deg = 12 o'clock, clockwise) and radius to SVG (x, y)
  */
@@ -60,6 +208,17 @@ export function polarToCartesian(cx, cy, radius, angleInDegrees) {
     x: cx + radius * Math.cos(angleInRadians),
     y: cy + radius * Math.sin(angleInRadians)
   };
+}
+
+/**
+ * Creates an SVG circular arc path from startAngleDeg to endAngleDeg clockwise (0 = 12 o'clock).
+ */
+export function createArcPath(cx, cy, radius, startAngleDeg, endAngleDeg) {
+  const start = polarToCartesian(cx, cy, radius, startAngleDeg);
+  const end = polarToCartesian(cx, cy, radius, endAngleDeg);
+  const sweep = normalizeDeg(endAngleDeg - startAngleDeg);
+  const largeArcFlag = sweep > 180 ? '1' : '0';
+  return `M ${start.x.toFixed(2)} ${start.y.toFixed(2)} A ${radius.toFixed(2)} ${radius.toFixed(2)} 0 ${largeArcFlag} 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)}`;
 }
 
 /**
@@ -200,5 +359,26 @@ export function createProjectedRingPath(projectFn, radius, width, height, steps 
     commands.push(`${i === 0 ? 'M' : 'L'} ${px} ${py}`);
   }
   commands.push('Z');
+  return commands.join(' ');
+}
+
+/**
+ * Generates an SVG open arc path for a partial ring (e.g. 270° open-bottom LED ring light)
+ * projected through the 4-point homography from startAngleDeg to endAngleDeg clockwise.
+ */
+export function createProjectedArcPath(projectFn, radius, startAngleDeg, endAngleDeg, width, height, steps = 60) {
+  if (!projectFn) return '';
+  const sweep = normalizeDeg(endAngleDeg - startAngleDeg);
+  const commands = [];
+  for (let i = 0; i <= steps; i++) {
+    const deg = startAngleDeg + (i / steps) * sweep;
+    const rad = ((deg - 90) * Math.PI) / 180;
+    const bx = Math.cos(rad) * radius;
+    const by = Math.sin(rad) * radius;
+    const pt = projectFn(bx, by);
+    const px = (pt.x * width).toFixed(1);
+    const py = (pt.y * height).toFixed(1);
+    commands.push(`${i === 0 ? 'M' : 'L'} ${px} ${py}`);
+  }
   return commands.join(' ');
 }

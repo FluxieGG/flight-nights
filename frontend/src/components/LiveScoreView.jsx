@@ -8,7 +8,10 @@ import {
   History,
   Code2,
   Shuffle,
-  CheckCircle2
+  CheckCircle2,
+  Cpu,
+  Lock,
+  Unlock
 } from 'lucide-react';
 import InteractiveDartboard from './InteractiveDartboard';
 import { BOARD_SECTORS } from '../utils/dartboardMath';
@@ -35,7 +38,9 @@ export default function LiveScoreView({
   onSimulateDart,
   onUndoLastDart,
   onNextTurn,
-  onClearAllLogs
+  onClearAllLogs,
+  onOpenDevPinModal,
+  isDevUnlocked
 }) {
   const [expandedLogId, setExpandedLogId] = useState(null);
 
@@ -80,8 +85,28 @@ export default function LiveScoreView({
             </h2>
           </div>
 
-          {/* Testing Controls: Undo Last Dart & Next Turn / Clear */}
+          {/* Testing Controls: Undo Last Dart & Next Turn / Clear & Dev Button */}
           <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={onOpenDevPinModal}
+              className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-black transition active:scale-95 sm:text-base ${
+                isDevUnlocked
+                  ? 'border-purple-400 bg-purple-600 text-white shadow-lg shadow-purple-600/30 hover:bg-purple-500'
+                  : 'border-purple-500/40 bg-purple-500/15 text-purple-300 shadow-md shadow-purple-950/50 hover:bg-purple-500/25'
+              }`}
+            >
+              {isDevUnlocked ? (
+                <Unlock className="h-5 w-5 text-purple-200" />
+              ) : (
+                <Lock className="h-5 w-5 text-purple-400" />
+              )}
+              <span>Dev Debug</span>
+              <span className="rounded bg-slate-950/70 px-1.5 py-0.5 font-mono text-xs font-bold text-purple-200">
+                PIN 0161
+              </span>
+            </button>
+
             <button
               type="button"
               onClick={onUndoLastDart}
