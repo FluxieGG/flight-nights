@@ -19,7 +19,11 @@ Double-click **`setup.bat`** in File Explorer, or run in PowerShell / Command Pr
 
 ```powershell
 .\setup.bat
-```
+
+Release from WSL usbipd (Only if you ran the old WSL script earlier):                                                                                                                                                                        
+      • If you previously used use-cameras-in-wsl.bat, Windows may still have your USB cameras bound to WSL. To make sure Windows owns all 3 cameras natively, open PowerShell as Administrator once and run:                                     
+        & "C:\Program Files\usbipd-win\usbipd.exe" unbind --all
+        ```
 
 This automatically creates `.env` (if not present) and installs all backend and frontend dependencies.
 
