@@ -1,23 +1,23 @@
-const BOARD_SECTORS = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+const { BOARD_SECTORS, SCORING_RADII, scoreFromBoardCoordinates } = require('./opencvDartsScorer');
 
-// Standard normalized radii relative to outside of Double ring = 1.0 (170mm)
+// Midpoint radii for generating representative coordinates when only shorthand notation (e.g., "T20") is given
 const RADII = {
-  INNER_BULL: 0.037,   // 6.35mm / 170mm
-  OUTER_BULL: 0.094,   // 15.9mm / 170mm
-  INNER_SINGLE: 0.365, // midpoint of inner single
-  TRIPLE_INNER: 0.582, // 99mm / 170mm
-  TRIPLE_MID: 0.606,   // midpoint of triple ring
-  TRIPLE_OUTER: 0.629, // 107mm / 170mm
-  OUTER_SINGLE: 0.790, // midpoint of outer single
-  DOUBLE_INNER: 0.953, // 162mm / 170mm
-  DOUBLE_MID: 0.976,   // midpoint of double ring
-  DOUBLE_OUTER: 1.000, // 170mm / 170mm
+  INNER_BULL: 0.022,
+  OUTER_BULL: 0.078,
+  INNER_SINGLE: 0.340,
+  TRIPLE_INNER: SCORING_RADII.TRIPLE_INNER,
+  TRIPLE_MID: (SCORING_RADII.TRIPLE_INNER + SCORING_RADII.TRIPLE_OUTER) * 0.5,
+  TRIPLE_OUTER: SCORING_RADII.TRIPLE_OUTER,
+  OUTER_SINGLE: 0.780,
+  DOUBLE_INNER: SCORING_RADII.DOUBLE_INNER,
+  DOUBLE_MID: (SCORING_RADII.DOUBLE_INNER + SCORING_RADII.DOUBLE_OUTER) * 0.5,
+  DOUBLE_OUTER: SCORING_RADII.DOUBLE_OUTER,
   MISS_RADIUS: 1.090
 };
 
 /**
  * Computes normalized (x, y) coordinates in [-1.15, 1.15] for a given segment and multiplier
- * if the vision engine payload did not include explicit coordinates.
+ * if the payload did not include explicit coordinates.
  * (0, 0) is center of bullseye, (0, -1) is 12 o'clock (top of 20).
  */
 function computeCoordinatesForDart(segment, multiplier) {
@@ -31,7 +31,7 @@ function computeCoordinatesForDart(segment, multiplier) {
   }
 
   if (segment === 25) {
-    const r = multiplier === 2 ? RADII.INNER_BULL * 0.45 : (RADII.INNER_BULL + RADII.OUTER_BULL) * 0.5;
+    const r = multiplier === 2 ? RADII.INNER_BULL : RADII.OUTER_BULL;
     const angle = Math.random() * Math.PI * 2;
     return {
       x: Number((Math.cos(angle) * r).toFixed(4)),
@@ -41,7 +41,6 @@ function computeCoordinatesForDart(segment, multiplier) {
 
   const sectorIndex = BOARD_SECTORS.indexOf(segment);
   const baseAngleDeg = sectorIndex >= 0 ? sectorIndex * 18 : 0;
-  // Slight natural jitter within the segment (-2.5 to +2.5 deg)
   const jitterDeg = (Math.random() - 0.5) * 4;
   const angleRad = ((baseAngleDeg + jitterDeg - 90) * Math.PI) / 180;
 
@@ -50,8 +49,6 @@ function computeCoordinatesForDart(segment, multiplier) {
     radius = RADII.TRIPLE_MID;
   } else if (multiplier === 2) {
     radius = RADII.DOUBLE_MID;
-  } else {
-    radius = RADII.OUTER_SINGLE;
   }
 
   return {
@@ -119,9 +116,9 @@ function formatDartLabel(segment, multiplier) {
 }
 
 /**
- * Normalizes any incoming dart payload from OpenDartboard or Simulated Test Mode.
+ * Normalizes any incoming dart payload from the OpenCV-Darts Vision Scorer or Simulated Test Mode.
  */
-function parseDartPayload(rawPayload, source = 'opendartboard') {
+function parseDartPayload(rawPayload, source = 'vision') {
   let payload = rawPayload;
   if (typeof rawPayload === 'string') {
     try {
@@ -140,12 +137,10 @@ function parseDartPayload(rawPayload, source = 'opendartboard') {
     return null;
   }
 
-  // Filter out non-dart control messages (e.g. heartbeat / ping / calibration_ack)
   if (payload.type && ['heartbeat', 'ping', 'pong', 'status', 'calibration_ack', 'hello'].includes(String(payload.type).toLowerCase())) {
     return null;
   }
 
-  // Handle nested data object if OpenDartboard wraps in { event: "dart", data: { ... } }
   const data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
 
   let segment = null;
@@ -189,7 +184,18 @@ function parseDartPayload(rawPayload, source = 'opendartboard') {
     }
   }
 
-  // Validate segment & multiplier
+  // If coordinates (x, y) were provided without explicit segment, score directly from coordinates
+  let x = typeof data.x === 'number' && !Number.isNaN(data.x) ? Number(data.x.toFixed(4)) : null;
+  let y = typeof data.y === 'number' && !Number.isNaN(data.y) ? Number(data.y.toFixed(4)) : null;
+
+  if ((segment === null || Number.isNaN(segment)) && x !== null && y !== null) {
+    const coordScore = scoreFromBoardCoordinates(x, y);
+    if (coordScore) {
+      segment = coordScore.segment;
+      multiplier = coordScore.multiplier;
+    }
+  }
+
   if (segment === null || Number.isNaN(segment)) {
     return null;
   }
@@ -203,7 +209,6 @@ function parseDartPayload(rawPayload, source = 'opendartboard') {
     multiplier = segment === 0 ? 0 : 1;
   }
 
-  // Clamp/normalize valid dartboard values
   if (segment === 0 || multiplier === 0) {
     segment = 0;
     multiplier = 0;
@@ -217,9 +222,6 @@ function parseDartPayload(rawPayload, source = 'opendartboard') {
 
   const { label, ringName, score } = formatDartLabel(segment, multiplier);
 
-  // Extract or compute normalized coordinates
-  let x = typeof data.x === 'number' && !Number.isNaN(data.x) ? Number(data.x.toFixed(4)) : null;
-  let y = typeof data.y === 'number' && !Number.isNaN(data.y) ? Number(data.y.toFixed(4)) : null;
   if (x === null || y === null) {
     const coords = computeCoordinatesForDart(segment, multiplier);
     x = coords.x;
@@ -235,6 +237,10 @@ function parseDartPayload(rawPayload, source = 'opendartboard') {
     ringName,
     x,
     y,
+    confidence: typeof data.confidence === 'number' ? data.confidence : source === 'vision' ? 0.95 : 1.0,
+    method: data.method || (source === 'vision' ? '3-camera-triangulation' : 'simulated'),
+    camerasUsed: Array.isArray(data.camerasUsed) ? data.camerasUsed : [],
+    perCamera: Array.isArray(data.perCamera) ? data.perCamera : [],
     source,
     timestamp: new Date().toISOString(),
     raw: typeof rawPayload === 'object' ? rawPayload : { raw: rawPayload }

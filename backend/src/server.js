@@ -7,17 +7,21 @@ const cors = require('cors');
 const { Server: SocketIOServer } = require('socket.io');
 
 const { parseDartPayload } = require('./dartParser');
-const { loadCalibration, saveCalibration, saveSingleCamera, resetCalibrationPoints, CONFIG_PATH } = require('./calibrationStore');
+const {
+  loadCalibration,
+  saveCalibration,
+  saveSingleCamera,
+  resetCalibrationPoints,
+  CONFIG_PATH
+} = require('./calibrationStore');
 const { inspectCameras } = require('./cameraManager');
-const { OpenDartboardClient } = require('./openDartboardClient');
+const { OpenCVDartsScorer } = require('./opencvDartsScorer');
 
 const PORT = Number(process.env.PORT) || 3001;
-const OPENDARTBOARD_WS_URL = process.env.OPENDARTBOARD_WS_URL || 'ws://localhost:13520';
-const OPENDARTBOARD_RECONNECT_MS = Number(process.env.OPENDARTBOARD_RECONNECT_MS) || 3000;
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
@@ -41,17 +45,16 @@ const sessionState = {
   lastDetectedDart: null
 };
 
-// OpenDartboard WebSocket Client
-const odbClient = new OpenDartboardClient({
-  url: OPENDARTBOARD_WS_URL,
-  reconnectIntervalMs: OPENDARTBOARD_RECONNECT_MS
-});
+// Built-in Open-Source OpenCV-Darts Multi-Camera Triangulation & Homography Scorer
+const scorerEngine = new OpenCVDartsScorer();
+scorerEngine.updateFromCalibration(calibrationState);
 
 function calculateTurnTotal(darts) {
   return darts.reduce((sum, dart) => sum + (dart.score || 0), 0);
 }
 
 function getFullState() {
+  scorerEngine.updateFromCalibration(calibrationState);
   return {
     turnNumber: sessionState.turnNumber,
     currentTurn: sessionState.currentTurn,
@@ -59,7 +62,7 @@ function getFullState() {
     turnHistory: sessionState.turnHistory,
     accuracyLog: sessionState.accuracyLog,
     lastDetectedDart: sessionState.lastDetectedDart,
-    openDartboard: odbClient.getStatus(),
+    scorerEngine: scorerEngine.getStatus(),
     calibration: calibrationState,
     calibrationPath: CONFIG_PATH,
     cameraDiagnostics: inspectCameras(calibrationState)
@@ -82,7 +85,7 @@ function archiveCurrentTurn() {
   sessionState.turnNumber += 1;
 }
 
-function recordDartHit(rawPayload, source = 'opendartboard') {
+function recordDartHit(rawPayload, source = 'vision') {
   const dart = parseDartPayload(rawPayload, source);
   if (!dart) {
     return null;
@@ -112,6 +115,15 @@ function recordDartHit(rawPayload, source = 'opendartboard') {
   return dartWithSlot;
 }
 
+function processVisionDetection(payload) {
+  const triangulated = scorerEngine.scoreDetection(payload, calibrationState);
+  if (!triangulated) {
+    return null;
+  }
+  const source = payload && payload.synthetic ? 'vision-test' : 'vision';
+  return recordDartHit(triangulated, source);
+}
+
 function undoLastDart() {
   if (sessionState.currentTurn.length > 0) {
     const removed = sessionState.currentTurn.pop();
@@ -121,7 +133,6 @@ function undoLastDart() {
       sessionState.accuracyLog[0] ||
       null;
   } else if (sessionState.turnHistory.length > 0) {
-    // Restore previous turn and remove its last dart
     const prevTurn = sessionState.turnHistory.shift();
     sessionState.turnNumber = prevTurn.turnNumber;
     sessionState.currentTurn = prevTurn.darts;
@@ -161,21 +172,12 @@ function clearAccuracyLog() {
   return fullState;
 }
 
-// Listen to OpenDartboard daemon events
-odbClient.on('status', (statusObj) => {
-  io.emit('opendartboard:status', statusObj);
-});
-
-odbClient.on('message', (rawMessage) => {
-  recordDartHit(rawMessage, 'opendartboard');
-});
-
 // REST API Routes
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'smart-darts-mvp-backend',
-    openDartboard: odbClient.getStatus(),
+    scorerEngine: scorerEngine.getStatus(),
     uptimeSeconds: Math.round(process.uptime())
   });
 });
@@ -191,6 +193,21 @@ app.post('/api/dart/simulate', (req, res) => {
     return res.status(400).json({ error: 'Invalid dart payload', received: payload });
   }
   return res.json({ ok: true, dart, state: getFullState() });
+});
+
+app.post('/api/vision/detect', (req, res) => {
+  const payload = req.body || {};
+  const dart = processVisionDetection(payload);
+  if (!dart) {
+    return res.status(400).json({ error: 'Could not triangulate dart detection', received: payload });
+  }
+  return res.json({ ok: true, dart, state: getFullState() });
+});
+
+app.post('/api/vision/status', (req, res) => {
+  const status = scorerEngine.updateCameraRuntimeStatus(req.body || {});
+  io.emit('scorer:status', status);
+  res.json({ ok: true, status });
 });
 
 app.post('/api/turn/undo', (_req, res) => {
@@ -220,7 +237,11 @@ app.post('/api/calibration', (req, res) => {
   try {
     const incoming = req.body || {};
     calibrationState = saveCalibration(incoming);
-    const syncResult = odbClient.sendCalibration(calibrationState);
+    scorerEngine.updateFromCalibration(calibrationState);
+    const syncResult = {
+      synced: true,
+      message: 'Calibration saved to config/calibration.json and loaded into OpenCV-Darts Triangulation Scorer'
+    };
     const fullState = getFullState();
     io.emit('calibration:updated', {
       calibration: calibrationState,
@@ -243,7 +264,11 @@ app.post('/api/calibration/camera/:id', (req, res) => {
     const cameraId = req.params.id;
     const cameraData = req.body || {};
     calibrationState = saveSingleCamera(cameraId, cameraData);
-    const syncResult = odbClient.sendCalibration(calibrationState);
+    scorerEngine.updateFromCalibration(calibrationState);
+    const syncResult = {
+      synced: true,
+      message: `Camera ${cameraId.replace('cam', '')} homography saved to config/calibration.json and active in OpenCV-Darts Scorer`
+    };
     const fullState = getFullState();
     io.emit('calibration:updated', {
       calibration: calibrationState,
@@ -267,7 +292,11 @@ app.post('/api/calibration/reset', (req, res) => {
   try {
     const { cameraId = null, preset = 'empty', layoutId = null } = req.body || {};
     calibrationState = resetCalibrationPoints(cameraId, preset, layoutId);
-    const syncResult = odbClient.sendCalibration(calibrationState);
+    scorerEngine.updateFromCalibration(calibrationState);
+    const syncResult = {
+      synced: true,
+      message: 'Calibration reset and synced with OpenCV-Darts Scorer'
+    };
     const fullState = getFullState();
     io.emit('calibration:updated', {
       calibration: calibrationState,
@@ -296,12 +325,6 @@ app.post('/api/cameras/test', (_req, res) => {
   res.json(diagnostics);
 });
 
-app.post('/api/opendartboard/reconnect', (req, res) => {
-  const { url } = req.body || {};
-  const status = odbClient.reconnectNow(url);
-  res.json({ ok: true, status });
-});
-
 // Socket.IO Real-Time Bridge
 io.on('connection', (socket) => {
   socket.emit('state:init', getFullState());
@@ -310,6 +333,21 @@ io.on('connection', (socket) => {
     const dart = recordDartHit(payload, 'simulated');
     if (typeof ack === 'function') {
       ack({ ok: Boolean(dart), dart });
+    }
+  });
+
+  socket.on('vision:detect', (payload, ack) => {
+    const dart = processVisionDetection(payload);
+    if (typeof ack === 'function') {
+      ack({ ok: Boolean(dart), dart });
+    }
+  });
+
+  socket.on('vision:camera_status', (runtimeStatus, ack) => {
+    const status = scorerEngine.updateCameraRuntimeStatus(runtimeStatus || {});
+    io.emit('scorer:status', status);
+    if (typeof ack === 'function') {
+      ack({ ok: true, status });
     }
   });
 
@@ -331,7 +369,11 @@ io.on('connection', (socket) => {
   socket.on('calibration:save', (newCal, ack) => {
     try {
       calibrationState = saveCalibration(newCal);
-      const syncResult = odbClient.sendCalibration(calibrationState);
+      scorerEngine.updateFromCalibration(calibrationState);
+      const syncResult = {
+        synced: true,
+        message: 'Calibration saved to config/calibration.json and active in OpenCV-Darts Scorer'
+      };
       const fullState = getFullState();
       io.emit('calibration:updated', {
         calibration: calibrationState,
@@ -351,7 +393,11 @@ io.on('connection', (socket) => {
   socket.on('calibration:save_camera', ({ cameraId, cameraData } = {}, ack) => {
     try {
       calibrationState = saveSingleCamera(cameraId, cameraData);
-      const syncResult = odbClient.sendCalibration(calibrationState);
+      scorerEngine.updateFromCalibration(calibrationState);
+      const syncResult = {
+        synced: true,
+        message: `Camera ${cameraId.replace('cam', '')} homography saved and active in OpenCV-Darts Scorer`
+      };
       const fullState = getFullState();
       io.emit('calibration:updated', {
         calibration: calibrationState,
@@ -372,7 +418,11 @@ io.on('connection', (socket) => {
   socket.on('calibration:reset', ({ cameraId = null, preset = 'empty', layoutId = null } = {}, ack) => {
     try {
       calibrationState = resetCalibrationPoints(cameraId, preset, layoutId);
-      const syncResult = odbClient.sendCalibration(calibrationState);
+      scorerEngine.updateFromCalibration(calibrationState);
+      const syncResult = {
+        synced: true,
+        message: 'Calibration reset and synced with OpenCV-Darts Scorer'
+      };
       const fullState = getFullState();
       io.emit('calibration:updated', {
         calibration: calibrationState,
@@ -394,18 +444,12 @@ io.on('connection', (socket) => {
     io.emit('cameras:diagnostics', diagnostics);
     if (typeof ack === 'function') ack({ ok: true, diagnostics });
   });
-
-  socket.on('opendartboard:reconnect', ({ url } = {}, ack) => {
-    const status = odbClient.reconnectNow(url);
-    if (typeof ack === 'function') ack({ ok: true, status });
-  });
 });
 
 function startServer() {
-  odbClient.start();
   server.listen(PORT, () => {
     console.log(`[Smart Darts Backend] Server listening on http://localhost:${PORT}`);
-    console.log(`[Smart Darts Backend] OpenDartboard WebSocket target: ${OPENDARTBOARD_WS_URL} (auto-reconnect: ${OPENDARTBOARD_RECONNECT_MS}ms)`);
+    console.log(`[Smart Darts Backend] Scorer Engine: ${scorerEngine.engineName} (${scorerEngine.algorithm})`);
   });
 }
 
@@ -416,6 +460,6 @@ if (require.main === module) {
 module.exports = {
   app,
   server,
-  odbClient,
+  scorerEngine,
   startServer
 };

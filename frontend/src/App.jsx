@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import TopNavBar from './components/TopNavBar';
 import LiveScoreView from './components/LiveScoreView';
@@ -6,6 +6,7 @@ import CalibrationView from './components/CalibrationView';
 import SetupWizardModal from './components/SetupWizardModal';
 import DebugView from './components/DebugView';
 import DevPinModal from './components/DevPinModal';
+import { useVisionScorer } from './utils/visionEngine';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('live'); // 'live' | 'calibration' | 'debug'
@@ -21,11 +22,16 @@ export default function App() {
     turnHistory: [],
     accuracyLog: [],
     lastDetectedDart: null,
-    openDartboard: {
-      status: 'reconnecting',
-      connected: false,
-      url: 'ws://localhost:13520',
-      reconnectIntervalMs: 3000
+    scorerEngine: {
+      engineName: 'OpenCV-Darts Triangulation Engine',
+      algorithm: '4-Point Homography + 3-Camera Ray Triangulation',
+      status: 'ready',
+      ready: true,
+      connected: true,
+      armed: true,
+      activeCamerasCount: 0,
+      calibratedCamerasCount: 3,
+      fps: 0
     },
     calibration: null,
     cameraDiagnostics: null
@@ -35,7 +41,7 @@ export default function App() {
   const highlightTimeoutRef = useRef(null);
   const socketRef = useRef(null);
 
-  const triggerDartHighlight = (dart) => {
+  const triggerDartHighlight = useCallback((dart) => {
     setHighlightedDart(dart);
     if (highlightTimeoutRef.current) {
       clearTimeout(highlightTimeoutRef.current);
@@ -43,10 +49,9 @@ export default function App() {
     highlightTimeoutRef.current = setTimeout(() => {
       setHighlightedDart(null);
     }, 2400);
-  };
+  }, []);
 
   useEffect(() => {
-    // Initial HTTP state fetch
     fetch('/api/state')
       .then((res) => res.json())
       .then((data) => {
@@ -56,7 +61,6 @@ export default function App() {
         // Socket.IO will sync once backend is reachable
       });
 
-    // Connect Socket.IO real-time bridge
     const socket = io('/', {
       path: '/socket.io',
       transports: ['websocket', 'polling']
@@ -77,10 +81,10 @@ export default function App() {
       triggerDartHighlight(dart);
     });
 
-    socket.on('opendartboard:status', (statusObj) => {
+    socket.on('scorer:status', (statusObj) => {
       setAppState((prev) => ({
         ...prev,
-        openDartboard: statusObj
+        scorerEngine: statusObj
       }));
     });
 
@@ -105,27 +109,56 @@ export default function App() {
       }
       socket.disconnect();
     };
-  }, []);
+  }, [triggerDartHighlight]);
 
   // Handlers
-  const handleSimulateDart = async (payload) => {
-    if (socketRef.current?.connected) {
-      socketRef.current.emit('dart:simulate', payload);
-      return;
-    }
-    const res = await fetch('/api/dart/simulate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setAppState((prev) => ({ ...prev, ...data.state }));
-      triggerDartHighlight(data.dart);
-    }
-  };
+  const handleSimulateDart = useCallback(
+    async (payload) => {
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('dart:simulate', payload);
+        return;
+      }
+      const res = await fetch('/api/dart/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAppState((prev) => ({ ...prev, ...data.state }));
+        triggerDartHighlight(data.dart);
+      }
+    },
+    [triggerDartHighlight]
+  );
 
-  const handleUndoLastDart = async () => {
+  const handleVisionDetect = useCallback(
+    async (payload) => {
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('vision:detect', payload);
+        return;
+      }
+      const res = await fetch('/api/vision/detect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAppState((prev) => ({ ...prev, ...data.state }));
+        triggerDartHighlight(data.dart);
+      }
+    },
+    [triggerDartHighlight]
+  );
+
+  const handleCameraRuntimeStatus = useCallback((runtimeStatus) => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('vision:camera_status', runtimeStatus);
+    }
+  }, []);
+
+  const handleUndoLastDart = useCallback(async () => {
     if (socketRef.current?.connected) {
       socketRef.current.emit('turn:undo');
       return;
@@ -135,9 +168,9 @@ export default function App() {
       const data = await res.json();
       setAppState((prev) => ({ ...prev, ...data.state }));
     }
-  };
+  }, []);
 
-  const handleNextTurn = async () => {
+  const handleNextTurn = useCallback(async () => {
     if (socketRef.current?.connected) {
       socketRef.current.emit('turn:next');
       return;
@@ -148,9 +181,9 @@ export default function App() {
       setAppState((prev) => ({ ...prev, ...data.state }));
       setHighlightedDart(null);
     }
-  };
+  }, []);
 
-  const handleClearAllLogs = async () => {
+  const handleClearAllLogs = useCallback(async () => {
     if (socketRef.current?.connected) {
       socketRef.current.emit('log:clear');
       return;
@@ -161,9 +194,9 @@ export default function App() {
       setAppState((prev) => ({ ...prev, ...data.state }));
       setHighlightedDart(null);
     }
-  };
+  }, []);
 
-  const handleSaveCalibration = async (newCalibration) => {
+  const handleSaveCalibration = useCallback(async (newCalibration) => {
     const res = await fetch('/api/calibration', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -174,9 +207,9 @@ export default function App() {
       setAppState((prev) => ({ ...prev, ...data.state }));
     }
     return data;
-  };
+  }, []);
 
-  const handleSaveSingleCamera = async (cameraId, cameraData) => {
+  const handleSaveSingleCamera = useCallback(async (cameraId, cameraData) => {
     const res = await fetch(`/api/calibration/camera/${cameraId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -187,31 +220,53 @@ export default function App() {
       setAppState((prev) => ({ ...prev, ...data.state }));
     }
     return data;
-  };
+  }, []);
 
-  const handleResetCalibration = async (cameraId = null, preset = 'empty', layoutId = null) => {
-    const res = await fetch('/api/calibration/reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cameraId, preset, layoutId })
-    });
-    const data = await res.json();
-    if (data.state) {
-      setAppState((prev) => ({ ...prev, ...data.state }));
-    }
-    return data;
-  };
+  const handleAssignCameraDevice = useCallback(
+    async (slotKey, deviceId, deviceLabel) => {
+      const existingCam = appState.calibration?.cameras?.[slotKey] || {};
+      return handleSaveSingleCamera(slotKey, {
+        ...existingCam,
+        deviceId,
+        deviceLabel,
+        devicePath: deviceLabel || existingCam.devicePath || `USB Camera`
+      });
+    },
+    [appState.calibration, handleSaveSingleCamera]
+  );
 
-  const handleTestCameras = async () => {
+  const handleResetCalibration = useCallback(
+    async (cameraId = null, preset = 'empty', layoutId = null) => {
+      const res = await fetch('/api/calibration/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cameraId, preset, layoutId })
+      });
+      const data = await res.json();
+      if (data.state) {
+        setAppState((prev) => ({ ...prev, ...data.state }));
+      }
+      return data;
+    },
+    []
+  );
+
+  const handleTestCameras = useCallback(async () => {
     const res = await fetch('/api/cameras/test', { method: 'POST' });
     const diagnostics = await res.json();
     setAppState((prev) => ({ ...prev, cameraDiagnostics: diagnostics }));
     return diagnostics;
-  };
+  }, []);
 
-  const handleReconnectOpenDartboard = async () => {
-    await fetch('/api/opendartboard/reconnect', { method: 'POST' });
-  };
+  // Persistent Windows 10 Multi-Camera Vision Pipeline (stays active across all tabs)
+  const vision = useVisionScorer({
+    calibration: appState.calibration,
+    currentTurnLength: appState.currentTurn.length,
+    onVisionDetect: handleVisionDetect,
+    onBoardCleared: handleNextTurn,
+    onCameraRuntimeStatus: handleCameraRuntimeStatus,
+    onAssignCameraDevice: handleAssignCameraDevice
+  });
 
   const handleOpenDevPinModal = () => {
     if (isDevUnlocked) {
@@ -231,20 +286,26 @@ export default function App() {
     setActiveTab('live');
   };
 
-  // Count how many cameras have all 4 calibration points placed
   const calibratedCamerasCount = appState.calibration?.cameras
     ? Object.values(appState.calibration.cameras).filter(
         (c) => Array.isArray(c.points) && c.points.length === 4
       ).length
     : 3;
 
+  const activeUsbCamerasCount = Object.values(vision.cameraStatusMap).filter(
+    (s) => s.active
+  ).length;
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 flex flex-col">
       <TopNavBar
         activeTab={activeTab}
         onSelectTab={setActiveTab}
-        openDartboardStatus={appState.openDartboard}
-        onReconnectOpenDartboard={handleReconnectOpenDartboard}
+        scorerStatus={appState.scorerEngine}
+        activeUsbCamerasCount={activeUsbCamerasCount}
+        visionArmed={vision.visionArmed}
+        onToggleVisionArmed={() => vision.setVisionArmed((v) => !v)}
+        onCaptureEmptyBoard={vision.captureEmptyBoardReference}
         simulateMode={simulateMode}
         onToggleSimulateMode={() => setSimulateMode((v) => !v)}
         onOpenHelpWizard={() => setIsHelpOpen(true)}
@@ -266,10 +327,19 @@ export default function App() {
             simulateMode={simulateMode}
             onSimulateDart={handleSimulateDart}
             onUndoLastDart={handleUndoLastDart}
-            onNextTurn={handleNextTurn}
-            onClearAllLogs={handleClearAllLogs}
+            onNextTurn={() => {
+              handleNextTurn();
+              vision.captureEmptyBoardReference();
+            }}
+            onClearAllLogs={() => {
+              handleClearAllLogs();
+              vision.captureEmptyBoardReference();
+            }}
             onOpenDevPinModal={handleOpenDevPinModal}
             isDevUnlocked={isDevUnlocked}
+            vision={vision}
+            calibration={appState.calibration}
+            onSwitchToCalibration={() => setActiveTab('calibration')}
           />
         ) : activeTab === 'calibration' ? (
           <CalibrationView
@@ -279,15 +349,17 @@ export default function App() {
             onSaveSingleCamera={handleSaveSingleCamera}
             onResetCalibration={handleResetCalibration}
             onTestCameras={handleTestCameras}
+            vision={vision}
           />
         ) : (
           <DebugView
             calibration={appState.calibration}
             cameraDiagnostics={appState.cameraDiagnostics}
-            openDartboardStatus={appState.openDartboard}
+            scorerStatus={appState.scorerEngine}
             onExitDevMode={handleLockDevMode}
             onSwitchToCalibration={() => setActiveTab('calibration')}
             onTestCameras={handleTestCameras}
+            vision={vision}
           />
         )}
       </main>
@@ -295,14 +367,17 @@ export default function App() {
       <SetupWizardModal
         isOpen={isHelpOpen}
         onClose={() => setIsHelpOpen(false)}
-        openDartboardStatus={appState.openDartboard}
-        onReconnectOpenDartboard={handleReconnectOpenDartboard}
+        scorerStatus={appState.scorerEngine}
+        activeUsbCamerasCount={activeUsbCamerasCount}
         cameraDiagnostics={appState.cameraDiagnostics}
-        onTestCameras={handleTestCameras}
+        onTestCameras={async () => {
+          await vision.scanWindowsCameras(true);
+          return handleTestCameras();
+        }}
         onSwitchToCalibration={() => setActiveTab('calibration')}
         onSwitchToLiveAndTestDart={(payload) => {
           setActiveTab('live');
-          handleSimulateDart(payload);
+          vision.runSyntheticVisionTest(payload.segment, payload.multiplier);
         }}
       />
 

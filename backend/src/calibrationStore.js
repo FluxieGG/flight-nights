@@ -78,18 +78,18 @@ const RING_LAYOUT_PRESETS = {
     label: '270° Open-Bottom Ring · Top Left of Bar (toward 5)',
     cameras: {
       cam1: {
-        name: "Camera 1",
-        position: "11:30 (toward 5)",
+        name: 'Camera 1',
+        position: '11:30 (toward 5)',
         mountAngleDeg: 345
       },
       cam2: {
-        name: "Camera 2",
-        position: "3:40 (over 10)",
+        name: 'Camera 2',
+        position: '3:40 (over 10)',
         mountAngleDeg: 110
       },
       cam3: {
-        name: "Camera 3",
-        position: "7:50 (over 16)",
+        name: 'Camera 3',
+        position: '7:50 (over 16)',
         mountAngleDeg: 235
       }
     }
@@ -103,22 +103,30 @@ const RING_LAYOUT_PRESETS = {
     label: '270° Open-Bottom Ring · Top Right of Bar (toward 1)',
     cameras: {
       cam1: {
-        name: "Camera 1",
-        position: "12:30 (toward 1)",
+        name: 'Camera 1',
+        position: '12:30 (toward 1)',
         mountAngleDeg: 15
       },
       cam2: {
-        name: "Camera 2",
-        position: "4:10 (over 15)",
+        name: 'Camera 2',
+        position: '4:10 (over 15)',
         mountAngleDeg: 125
       },
       cam3: {
-        name: "Camera 3",
-        position: "8:20 (over 8)",
+        name: 'Camera 3',
+        position: '8:20 (over 8)',
         mountAngleDeg: 250
       }
     }
   }
+};
+
+const DEFAULT_VISION_SETTINGS = {
+  sensitivity: 26,
+  minContourPixels: 16,
+  settleFrames: 3,
+  autoClearOnPull: true,
+  resolutionMode: '720p' // '720p' | '480p'
 };
 
 function buildCamerasForLayout(layoutId = 'ring270_left5', existingCameras = {}) {
@@ -139,6 +147,8 @@ function buildCamerasForLayout(layoutId = 'ring270_left5', existingCameras = {})
       position: camPreset.position,
       mountAngleDeg: camPreset.mountAngleDeg,
       devicePath: prev.devicePath && !String(prev.devicePath).startsWith('/dev/') ? prev.devicePath : device,
+      deviceId: typeof prev.deviceId === 'string' ? prev.deviceId : '',
+      deviceLabel: typeof prev.deviceLabel === 'string' ? prev.deviceLabel : '',
       streamUrl: typeof prev.streamUrl === 'string' ? prev.streamUrl : stream,
       calibrated: true,
       showOverlay: prev.showOverlay !== false,
@@ -160,6 +170,7 @@ const DEFAULT_CALIBRATION = {
     openBottomGapDeg: RING_LAYOUT_PRESETS[DEFAULT_LAYOUT_ID].openBottomGapDeg,
     label: RING_LAYOUT_PRESETS[DEFAULT_LAYOUT_ID].label
   },
+  visionSettings: { ...DEFAULT_VISION_SETTINGS },
   boardReferencePoints: [
     { id: 'p1', label: '20 / 1 Double Intersection (Top)', angleDeg: 9, normalizedBoard: { x: 0.5266, y: 0.3318 } },
     { id: 'p2', label: '6 / 10 Double Intersection (Right)', angleDeg: 99, normalizedBoard: { x: 0.6682, y: 0.5266 } },
@@ -169,7 +180,7 @@ const DEFAULT_CALIBRATION = {
   cameras: buildCamerasForLayout(DEFAULT_LAYOUT_ID)
 };
 
-function normalizeLegacyDeviceNames(camerasObj) {
+function sanitizeCamerasObject(camerasObj) {
   const normalized = { ...camerasObj };
   const defaults = ['USB Camera 0', 'USB Camera 1', 'USB Camera 2'];
   const defaultAngles = [345, 110, 235];
@@ -181,84 +192,133 @@ function normalizeLegacyDeviceNames(camerasObj) {
       if (typeof normalized[key].mountAngleDeg !== 'number') {
         normalized[key].mountAngleDeg = defaultAngles[idx];
       }
+      if (typeof normalized[key].deviceId !== 'string') {
+        normalized[key].deviceId = '';
+      }
+      if (typeof normalized[key].deviceLabel !== 'string') {
+        normalized[key].deviceLabel = '';
+      }
     }
   });
   return normalized;
 }
+
+let memoryCalibrationCache = null;
 
 function loadCalibration() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
       const content = fs.readFileSync(CONFIG_PATH, 'utf-8');
       const parsed = JSON.parse(content);
-      return {
+      const layoutId = (parsed.ringLayout && parsed.ringLayout.id) || DEFAULT_LAYOUT_ID;
+      const preset = RING_LAYOUT_PRESETS[layoutId] || RING_LAYOUT_PRESETS[DEFAULT_LAYOUT_ID];
+
+      const loaded = {
         ...DEFAULT_CALIBRATION,
         ...parsed,
         ringLayout: {
           ...DEFAULT_CALIBRATION.ringLayout,
-          ...(parsed.ringLayout || {})
+          ...(parsed.ringLayout || {}),
+          label: preset.label
         },
-        cameras: normalizeLegacyDeviceNames({
+        visionSettings: {
+          ...DEFAULT_VISION_SETTINGS,
+          ...(parsed.visionSettings || {})
+        },
+        cameras: sanitizeCamerasObject({
           ...DEFAULT_CALIBRATION.cameras,
           ...(parsed.cameras || {})
         })
       };
+      if (!memoryCalibrationCache) {
+        memoryCalibrationCache = loaded;
+      }
+      return memoryCalibrationCache;
     }
   } catch (err) {
     console.warn('[CalibrationStore] Failed to read calibration.json, using default:', err.message);
   }
-  saveCalibration(DEFAULT_CALIBRATION);
-  return JSON.parse(JSON.stringify(DEFAULT_CALIBRATION));
+  if (memoryCalibrationCache) {
+    return memoryCalibrationCache;
+  }
+  return saveCalibration(DEFAULT_CALIBRATION);
 }
 
 function saveCalibration(newConfig) {
+  const now = new Date().toISOString();
+  let currentCameras = (memoryCalibrationCache && memoryCalibrationCache.cameras) || {};
+  let currentVisionSettings = {
+    ...DEFAULT_VISION_SETTINGS,
+    ...((memoryCalibrationCache && memoryCalibrationCache.visionSettings) || {})
+  };
+
+  if (fs.existsSync(CONFIG_PATH)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      currentCameras = { ...(existing.cameras || {}), ...currentCameras };
+      currentVisionSettings = {
+        ...DEFAULT_VISION_SETTINGS,
+        ...(existing.visionSettings || {}),
+        ...currentVisionSettings
+      };
+    } catch {
+      // ignore read error
+    }
+  }
+
+  const incomingCameras = (newConfig && newConfig.cameras) || {};
+  const mergedCameras = sanitizeCamerasObject({ ...currentCameras, ...incomingCameras });
+
+  ['cam1', 'cam2', 'cam3'].forEach((id, idx) => {
+    const num = idx + 1;
+    if (mergedCameras[id]) {
+      mergedCameras[id] = {
+        ...(currentCameras[id] || {}),
+        ...(incomingCameras[id] || {}),
+        name: `Camera ${num}`
+      };
+      const points = mergedCameras[id].points;
+      const isCalibrated = Array.isArray(points) && points.length === 4;
+      mergedCameras[id].calibrated = isCalibrated;
+      if (isCalibrated && !mergedCameras[id].savedAt) {
+        mergedCameras[id].savedAt = now;
+      }
+    }
+  });
+
+  const layoutId =
+    (newConfig && newConfig.ringLayout && newConfig.ringLayout.id) || DEFAULT_LAYOUT_ID;
+  const preset = RING_LAYOUT_PRESETS[layoutId] || RING_LAYOUT_PRESETS[DEFAULT_LAYOUT_ID];
+
+  const merged = {
+    ...DEFAULT_CALIBRATION,
+    ...newConfig,
+    cameras: mergedCameras,
+    ringLayout: {
+      ...DEFAULT_CALIBRATION.ringLayout,
+      ...((newConfig && newConfig.ringLayout) || {}),
+      label: preset.label
+    },
+    visionSettings: {
+      ...currentVisionSettings,
+      ...((newConfig && newConfig.visionSettings) || {})
+    },
+    updatedAt: now
+  };
+
+  memoryCalibrationCache = merged;
+
   try {
     const dir = path.dirname(CONFIG_PATH);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    const now = new Date().toISOString();
-    let currentCameras = {};
-    if (fs.existsSync(CONFIG_PATH)) {
-      try {
-        const existing = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-        currentCameras = existing.cameras || {};
-      } catch {}
-    }
-
-    const incomingCameras = (newConfig && newConfig.cameras) || {};
-    const mergedCameras = { ...currentCameras, ...incomingCameras };
-
-    ['cam1', 'cam2', 'cam3'].forEach((id, idx) => {
-      const num = idx + 1;
-      if (mergedCameras[id]) {
-        // Enforce clean names Camera 1, Camera 2, Camera 3
-        mergedCameras[id].name = `Camera ${num}`;
-        const points = mergedCameras[id].points;
-        const isCalibrated = Array.isArray(points) && points.length === 4;
-        mergedCameras[id].calibrated = isCalibrated;
-        if (isCalibrated && !mergedCameras[id].savedAt) {
-          mergedCameras[id].savedAt = now;
-        }
-      }
-    });
-
-    const merged = {
-      ...DEFAULT_CALIBRATION,
-      ...newConfig,
-      cameras: mergedCameras,
-      ringLayout: {
-        ...DEFAULT_CALIBRATION.ringLayout,
-        ...((newConfig && newConfig.ringLayout) || {})
-      },
-      updatedAt: now
-    };
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf-8');
-    return merged;
   } catch (err) {
-    console.error('[CalibrationStore] Error saving calibration.json:', err.message);
-    throw err;
+    console.warn('[CalibrationStore] Warning: kept calibration in memory (disk write skipped):', err.message);
   }
+
+  return merged;
 }
 
 function saveSingleCamera(cameraId, cameraData) {
@@ -290,7 +350,6 @@ function saveSingleCamera(cameraId, cameraData) {
 function resetCalibrationPoints(cameraId = null, preset = 'empty', layoutId = null) {
   const current = loadCalibration();
 
-  // If switching ring layout preset (e.g. left-of-bar toward 5 vs right-of-bar toward 1)
   if (layoutId && RING_LAYOUT_PRESETS[layoutId]) {
     const layoutDef = RING_LAYOUT_PRESETS[layoutId];
     current.ringLayout = {
@@ -333,6 +392,7 @@ function resetCalibrationPoints(cameraId = null, preset = 'empty', layoutId = nu
 module.exports = {
   CONFIG_PATH,
   DEFAULT_CALIBRATION,
+  DEFAULT_VISION_SETTINGS,
   RING_LAYOUT_PRESETS,
   computePerspectivePresetPoints,
   loadCalibration,

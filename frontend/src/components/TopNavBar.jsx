@@ -3,8 +3,7 @@ import {
   Target,
   Camera,
   HelpCircle,
-  Wifi,
-  WifiOff,
+  Eye,
   RefreshCw,
   FlaskConical,
   Cpu,
@@ -15,18 +14,19 @@ import {
 export default function TopNavBar({
   activeTab,
   onSelectTab,
-  openDartboardStatus,
-  onReconnectOpenDartboard,
+  scorerStatus,
+  activeUsbCamerasCount = 0,
+  visionArmed = true,
+  onToggleVisionArmed,
+  onCaptureEmptyBoard,
   simulateMode,
   onToggleSimulateMode,
   onOpenHelpWizard,
   calibratedCamerasCount,
   isDevUnlocked,
-  onOpenDevPinModal,
-  onLockDevMode
+  onOpenDevPinModal
 }) {
-  const isConnected = openDartboardStatus?.connected;
-  const wsUrl = openDartboardStatus?.url || 'ws://localhost:13520';
+  const isEngineReady = scorerStatus?.ready !== false;
 
   return (
     <header className="sticky top-0 z-30 border-b border-slate-800/90 bg-slate-950/95 backdrop-blur-md">
@@ -39,14 +39,14 @@ export default function TopNavBar({
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">
-                SMART DARTS <span className="text-emerald-400">MVP</span>
+                FLIGHT NIGHTS <span className="text-emerald-400">DARTS</span>
               </h1>
               <span className="hidden rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-slate-300 sm:inline-block">
                 Windows 10 PC · 3x OV9732
               </span>
             </div>
             <p className="text-xs font-medium text-slate-400 sm:text-sm">
-              OpenDartboard Calibration &amp; Live Accuracy Tester
+              OpenCV-Darts 3-Camera Homography &amp; Triangulation Scorer
             </p>
           </div>
         </div>
@@ -134,11 +134,11 @@ export default function TopNavBar({
             </span>
           </button>
 
-          {/* OpenDartboard Connection Status Indicator */}
+          {/* OpenCV-Darts Vision Scorer Status Indicator */}
           <div
-            title={`Target daemon: ${wsUrl} (Auto-retry every 3s)`}
+            title="Built-in OpenCV-Darts 3-Camera Homography & Triangulation Scorer (Windows 10 Native)"
             className={`flex items-center gap-2.5 rounded-xl border px-3.5 py-2 text-xs font-bold sm:text-sm ${
-              isConnected
+              isEngineReady && visionArmed
                 ? 'border-emerald-500/40 bg-emerald-950/60 text-emerald-300'
                 : 'border-amber-500/40 bg-amber-950/50 text-amber-300'
             }`}
@@ -146,35 +146,35 @@ export default function TopNavBar({
             <span className="relative flex h-3 w-3">
               <span
                 className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${
-                  isConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                  isEngineReady && visionArmed ? 'bg-emerald-400' : 'bg-amber-400'
                 }`}
               />
               <span
                 className={`relative inline-flex h-3 w-3 rounded-full ${
-                  isConnected ? 'bg-emerald-500' : 'bg-amber-500'
+                  isEngineReady && visionArmed ? 'bg-emerald-500' : 'bg-amber-500'
                 }`}
               />
             </span>
 
-            {isConnected ? (
-              <div className="flex items-center gap-1.5">
-                <Wifi className="h-4 w-4 text-emerald-400" />
-                <span>OpenDartboard: Connected</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                <WifiOff className="h-4 w-4 text-amber-400" />
-                <span>OpenDartboard: Disconnected / Reconnecting...</span>
-                <button
-                  type="button"
-                  onClick={onReconnectOpenDartboard}
-                  title="Force immediate reconnect attempt to ws://localhost:13520"
-                  className="ml-1 rounded-md border border-amber-500/40 bg-amber-500/15 p-1 text-amber-200 transition hover:bg-amber-500/30"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <Eye className="h-4 w-4 text-emerald-400" />
+              <span>
+                OpenCV-Darts Scorer:{' '}
+                {visionArmed
+                  ? activeUsbCamerasCount > 0
+                    ? `Active (${activeUsbCamerasCount}/3 USB Cams)`
+                    : 'Ready (Plug USB Cams)'
+                  : 'Paused'}
+              </span>
+              <button
+                type="button"
+                onClick={onCaptureEmptyBoard}
+                title="Capture empty board reference frame across all cameras"
+                className="ml-1 rounded-md border border-emerald-500/40 bg-emerald-500/15 p-1 text-emerald-200 transition hover:bg-emerald-500/30"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
 
           {/* Toggleable Out-of-the-Box Simulate Dart / Test Mode */}
@@ -188,7 +188,7 @@ export default function TopNavBar({
             }`}
           >
             <FlaskConical className="h-4 w-4" />
-            <span>Simulate Dart: {simulateMode ? 'ON' : 'OFF'}</span>
+            <span>Test Controls: {simulateMode ? 'ON' : 'OFF'}</span>
           </button>
 
           {/* Prominent Always-Visible Help / Setup Guide Button */}

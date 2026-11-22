@@ -2,27 +2,19 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Camera,
   RefreshCw,
-  Video,
   VideoOff,
   CheckCircle2,
-  AlertCircle,
   Eye,
   EyeOff,
   Cpu,
-  Lock,
-  ExternalLink,
-  ShieldCheck,
-  Sparkles,
-  Sliders
+  Lock
 } from 'lucide-react';
 import {
-  BOARD_SECTORS,
   BOARD_RADII,
   OPEN_BOTTOM_GAP,
   normalizeDeg,
   angleToClockLabel,
   angleToNearestSector,
-  computeTriangulationMetrics,
   computePerspectivePresetPoints,
   buildBoardHomography,
   createProjectedRingPath,
@@ -30,25 +22,34 @@ import {
 } from '../utils/dartboardMath';
 
 /**
- * Individual physical webcam live preview monitor
+ * Individual physical webcam live preview monitor (reuses persistent stream if already assigned to a slot)
  */
-function PhysicalWebcamCard({ device, index, onAssignToSlot }) {
+function PhysicalWebcamCard({ device, index, existingStream, onAssignToSlot }) {
   const videoRef = useRef(null);
   const [streamActive, setStreamActive] = useState(false);
   const [resolution, setResolution] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    let currentStream = null;
+    let localStream = null;
     let isMounted = true;
 
     async function startStream() {
+      if (existingStream && existingStream.active) {
+        if (videoRef.current) {
+          videoRef.current.srcObject = existingStream;
+        }
+        setStreamActive(true);
+        setError(null);
+        return;
+      }
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             deviceId: { exact: device.deviceId },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+            width: { ideal: 640 },
+            height: { ideal: 480 }
           },
           audio: false
         });
@@ -58,7 +59,7 @@ function PhysicalWebcamCard({ device, index, onAssignToSlot }) {
           return;
         }
 
-        currentStream = stream;
+        localStream = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
@@ -76,11 +77,11 @@ function PhysicalWebcamCard({ device, index, onAssignToSlot }) {
 
     return () => {
       isMounted = false;
-      if (currentStream) {
-        currentStream.getTracks().forEach((t) => t.stop());
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
       }
     };
-  }, [device.deviceId]);
+  }, [device.deviceId, existingStream]);
 
   const handleLoadedMetadata = () => {
     if (videoRef.current) {
@@ -122,7 +123,7 @@ function PhysicalWebcamCard({ device, index, onAssignToSlot }) {
               <span>LIVE</span>
             </>
           ) : (
-            <span>Connecting...</span>
+            <span>Standby</span>
           )}
         </span>
       </div>
@@ -153,9 +154,9 @@ function PhysicalWebcamCard({ device, index, onAssignToSlot }) {
         </div>
       </div>
 
-      {/* Assign Quick Buttons */}
+      {/* Assign Quick Buttons (Persists to calibration.json!) */}
       <div className="flex items-center justify-between border-t border-slate-800 bg-slate-950 px-3.5 py-2.5 text-xs">
-        <span className="font-bold text-slate-400">Map to Slot:</span>
+        <span className="font-bold text-slate-400">Save to Slot:</span>
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -185,82 +186,32 @@ function PhysicalWebcamCard({ device, index, onAssignToSlot }) {
 }
 
 /**
- * Camera Slot Diagnostic Card with stream and ring calibration overlay
+ * Camera Slot Diagnostic Card with persistent stream and ring calibration overlay
  */
 function SlotPreviewCard({
   slotKey,
   camera,
   diagnostic,
+  persistentStream,
+  runtimeStatus,
   windowsVideoDevices,
-  assignedDeviceId,
-  onAssignDevice,
-  onSwitchToCalibration
+  onAssignDevice
 }) {
   const videoRef = useRef(null);
-  const [streamActive, setStreamActive] = useState(false);
   const [showOverlay, setShowOverlay] = useState(true);
-  const [error, setError] = useState(null);
 
   const mountAngleDeg = camera?.mountAngleDeg ?? (slotKey === 'cam1' ? 345 : slotKey === 'cam2' ? 110 : 235);
   const clockLabel = angleToClockLabel(mountAngleDeg);
   const sectorLabel = angleToNearestSector(mountAngleDeg);
   const points = Array.isArray(camera?.points) ? camera.points : [];
+  const streamActive = Boolean(persistentStream && runtimeStatus?.active);
 
   useEffect(() => {
-    let activeStream = null;
-    let isMounted = true;
-
-    async function connectStream() {
-      if (!assignedDeviceId && windowsVideoDevices.length === 0) return;
-
-      const deviceIdToUse =
-        assignedDeviceId ||
-        (slotKey === 'cam1' && windowsVideoDevices[0]?.deviceId) ||
-        (slotKey === 'cam2' && (windowsVideoDevices[1]?.deviceId || windowsVideoDevices[0]?.deviceId)) ||
-        (slotKey === 'cam3' && (windowsVideoDevices[2]?.deviceId || windowsVideoDevices[0]?.deviceId));
-
-      if (!deviceIdToUse) return;
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            deviceId: { exact: deviceIdToUse },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        });
-
-        if (!isMounted) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-
-        activeStream = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-        setStreamActive(true);
-        setError(null);
-      } catch (err) {
-        if (isMounted) {
-          setError(err.message || 'Stream error');
-          setStreamActive(false);
-        }
-      }
+    if (videoRef.current) {
+      videoRef.current.srcObject = persistentStream || null;
     }
+  }, [persistentStream]);
 
-    connectStream();
-
-    return () => {
-      isMounted = false;
-      if (activeStream) {
-        activeStream.getTracks().forEach((t) => t.stop());
-      }
-    };
-  }, [assignedDeviceId, windowsVideoDevices, slotKey]);
-
-  // Projected SVG overlay
   const W = 400;
   const H = 300;
   const presetPts = points.length === 4 ? points : computePerspectivePresetPoints(mountAngleDeg);
@@ -282,7 +233,7 @@ function SlotPreviewCard({
               {camera?.name || `Camera (${clockLabel})`}
             </h3>
             <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-xs font-bold text-slate-300">
-              {camera?.devicePath || 'USB Camera'}
+              {camera?.deviceLabel || camera?.devicePath || 'USB Camera'}
             </span>
           </div>
           <p className="mt-0.5 text-xs text-slate-400">
@@ -307,7 +258,6 @@ function SlotPreviewCard({
 
       {/* Video Preview Viewport */}
       <div className="relative aspect-[4/3] w-full bg-slate-950 overflow-hidden">
-        {/* Physical USB camera stream */}
         <video
           ref={videoRef}
           autoPlay
@@ -395,18 +345,18 @@ function SlotPreviewCard({
         {/* Labels HUD */}
         <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-950/85 px-2.5 py-1 text-[11px] font-bold text-slate-200 backdrop-blur-sm">
           <span className={`h-2 w-2 rounded-full ${streamActive ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-          <span>{streamActive ? 'USB Live Feed' : 'Simulated Preview'}</span>
+          <span>{streamActive ? `USB Live (${runtimeStatus?.resolution || '720p'})` : 'Simulated Preview'}</span>
         </div>
 
         <div className="pointer-events-none absolute right-3 bottom-3 rounded-lg border border-slate-800 bg-slate-950/85 px-2 py-0.5 font-mono text-[10px] text-slate-300">
-          Target: {camera?.devicePath || 'USB Camera'}
+          Diff: {runtimeStatus?.diffScore || 0}px
         </div>
       </div>
 
       {/* Footer Controls & Device Selector */}
       <div className="flex flex-col gap-2.5 border-t border-slate-800 bg-slate-950 p-3 text-xs">
         <div className="flex items-center justify-between">
-          <span className="font-bold text-slate-400">USB Device Source:</span>
+          <span className="font-bold text-slate-400">Assigned USB Camera:</span>
           <button
             type="button"
             onClick={() => setShowOverlay(!showOverlay)}
@@ -422,11 +372,11 @@ function SlotPreviewCard({
         </div>
 
         <select
-          value={assignedDeviceId || ''}
+          value={camera?.deviceId || ''}
           onChange={(e) => onAssignDevice(slotKey, e.target.value)}
           className="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-purple-500 focus:outline-none"
         >
-          <option value="">Auto-Detect Default</option>
+          <option value="">Auto-Assign Distinct USB Camera</option>
           {windowsVideoDevices.map((dev, i) => (
             <option key={dev.deviceId || i} value={dev.deviceId}>
               {dev.label || `Windows USB Camera #${i + 1}`}
@@ -445,43 +395,21 @@ function SlotPreviewCard({
 export default function DebugView({
   calibration,
   cameraDiagnostics,
-  openDartboardStatus,
+  scorerStatus,
   onExitDevMode,
   onSwitchToCalibration,
-  onTestCameras
+  onTestCameras,
+  vision
 }) {
-  const [windowsVideoDevices, setWindowsVideoDevices] = useState([]);
-  const [assignedDevices, setAssignedDevices] = useState({
-    cam1: '',
-    cam2: '',
-    cam3: ''
-  });
   const [scanning, setScanning] = useState(false);
-  const [permissionGranted, setPermissionGranted] = useState(false);
+
+  const windowsVideoDevices = vision?.windowsVideoDevices || [];
 
   const scanDevices = async () => {
     setScanning(true);
     try {
-      if (navigator.mediaDevices?.enumerateDevices) {
-        // Trigger a temporary stream if permissions haven't been granted so labels appear
-        try {
-          const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          tempStream.getTracks().forEach((t) => t.stop());
-          setPermissionGranted(true);
-        } catch {
-          // If rejected or unavailable
-        }
-
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevs = devices.filter((d) => d.kind === 'videoinput');
-        setWindowsVideoDevices(videoDevs);
-
-        // Auto-assign first 3 devices if available
-        setAssignedDevices((prev) => ({
-          cam1: prev.cam1 || videoDevs[0]?.deviceId || '',
-          cam2: prev.cam2 || videoDevs[1]?.deviceId || '',
-          cam3: prev.cam3 || videoDevs[2]?.deviceId || ''
-        }));
+      if (vision?.scanWindowsCameras) {
+        await vision.scanWindowsCameras(true);
       }
       if (onTestCameras) {
         await onTestCameras();
@@ -491,15 +419,10 @@ export default function DebugView({
     }
   };
 
-  useEffect(() => {
-    scanDevices();
-  }, []);
-
-  const handleAssignToSlot = (slotKey, deviceId) => {
-    setAssignedDevices((prev) => ({
-      ...prev,
-      [slotKey]: deviceId
-    }));
+  const handleAssignToSlot = async (slotKey, deviceId) => {
+    if (vision?.assignDeviceToSlot) {
+      await vision.assignDeviceToSlot(slotKey, deviceId);
+    }
   };
 
   const camerasObj = calibration?.cameras || {};
@@ -528,11 +451,11 @@ export default function DebugView({
                 DEVELOPER MODE (PIN: 0161 UNLOCKED)
               </span>
               <h2 className="text-xl font-black text-white sm:text-2xl">
-                Camera Previews &amp; Hardware Diagnostics
+                Camera Previews &amp; OpenCV-Darts Vision Diagnostics
               </h2>
             </div>
             <p className="mt-0.5 text-xs text-slate-300 sm:text-sm">
-              Live USB video feeds, device indexing, and 270° ring geometry verification
+              Live Windows 10 DirectShow USB video feeds, persistent slot mapping, and 270° ring geometry verification
             </p>
           </div>
         </div>
@@ -586,7 +509,7 @@ export default function DebugView({
                   : 'bg-amber-500/20 text-amber-300'
               }`}
             >
-              {windowsVideoDevices.length >= 3 ? 'All 3 Ready' : 'Need 3 Cameras'}
+              {windowsVideoDevices.length >= 3 ? 'All 3 Ready' : 'Hot-Plug Ready'}
             </span>
           </div>
           <p className="mt-1 text-[11px] text-slate-400">
@@ -596,22 +519,18 @@ export default function DebugView({
 
         <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-            OpenDartboard Daemon
+            OpenCV-Darts Scorer Engine
           </span>
           <div className="mt-1 flex items-baseline justify-between">
-            <span
-              className={`font-mono text-2xl font-black ${
-                openDartboardStatus?.connected ? 'text-emerald-400' : 'text-amber-400'
-              }`}
-            >
-              {openDartboardStatus?.connected ? 'CONNECTED' : 'STANDBY'}
+            <span className="font-mono text-2xl font-black text-emerald-400">
+              {vision?.visionArmed ? 'ACTIVE' : 'PAUSED'}
             </span>
             <span className="font-mono text-xs text-slate-400">
-              :13520
+              {vision?.fps || 0} FPS
             </span>
           </div>
           <p className="mt-1 text-[11px] text-slate-400 truncate">
-            Target: {openDartboardStatus?.url || 'ws://localhost:13520'}
+            {scorerStatus?.algorithm || '4-Point Homography + 3-Camera Triangulation'}
           </p>
         </div>
 
@@ -638,14 +557,14 @@ export default function DebugView({
           </span>
           <div className="mt-1 flex items-baseline justify-between">
             <span className="font-mono text-2xl font-black text-cyan-400">
-              USB 3.0 / 2.0
+              {vision?.resolutionMode || '720p'}
             </span>
             <span className="rounded-full bg-cyan-500/20 px-2 py-0.5 text-xs font-black text-cyan-300">
-              Optimized
+              Auto-Fallback
             </span>
           </div>
           <p className="mt-1 text-[11px] text-slate-400">
-            Separate root hubs prevent 720p bandwidth drops
+            Automatically steps down to 480p if USB 2.0 hub saturates
           </p>
         </div>
       </section>
@@ -668,28 +587,28 @@ export default function DebugView({
             slotKey="cam1"
             camera={cam1}
             diagnostic={diagMap.cam1}
+            persistentStream={vision?.cameraStreams?.cam1}
+            runtimeStatus={vision?.cameraStatusMap?.cam1}
             windowsVideoDevices={windowsVideoDevices}
-            assignedDeviceId={assignedDevices.cam1}
             onAssignDevice={handleAssignToSlot}
-            onSwitchToCalibration={onSwitchToCalibration}
           />
           <SlotPreviewCard
             slotKey="cam2"
             camera={cam2}
             diagnostic={diagMap.cam2}
+            persistentStream={vision?.cameraStreams?.cam2}
+            runtimeStatus={vision?.cameraStatusMap?.cam2}
             windowsVideoDevices={windowsVideoDevices}
-            assignedDeviceId={assignedDevices.cam2}
             onAssignDevice={handleAssignToSlot}
-            onSwitchToCalibration={onSwitchToCalibration}
           />
           <SlotPreviewCard
             slotKey="cam3"
             camera={cam3}
             diagnostic={diagMap.cam3}
+            persistentStream={vision?.cameraStreams?.cam3}
+            runtimeStatus={vision?.cameraStatusMap?.cam3}
             windowsVideoDevices={windowsVideoDevices}
-            assignedDeviceId={assignedDevices.cam3}
             onAssignDevice={handleAssignToSlot}
-            onSwitchToCalibration={onSwitchToCalibration}
           />
         </div>
       </section>
@@ -702,7 +621,7 @@ export default function DebugView({
               Connected Physical USB Cameras ({windowsVideoDevices.length} Detected)
             </h3>
             <p className="text-xs text-slate-400 sm:text-sm">
-              Live feeds direct from each physical USB webcam. Use &ldquo;Map to Slot&rdquo; to bind any webcam to Cam 1, 2, or 3.
+              Live feeds direct from each physical USB webcam. Use &ldquo;Save to Slot&rdquo; to permanently bind any webcam to Cam 1, 2, or 3.
             </p>
           </div>
 
@@ -735,14 +654,24 @@ export default function DebugView({
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {windowsVideoDevices.map((dev, idx) => (
-              <PhysicalWebcamCard
-                key={dev.deviceId || idx}
-                device={dev}
-                index={idx}
-                onAssignToSlot={handleAssignToSlot}
-              />
-            ))}
+            {windowsVideoDevices.map((dev, idx) => {
+              const matchedSlot = ['cam1', 'cam2', 'cam3'].find(
+                (k) =>
+                  vision?.cameraStreams?.[k] &&
+                  vision.cameraStreams[k]
+                    .getVideoTracks?.()[0]
+                    ?.getSettings?.().deviceId === dev.deviceId
+              );
+              return (
+                <PhysicalWebcamCard
+                  key={dev.deviceId || idx}
+                  device={dev}
+                  index={idx}
+                  existingStream={matchedSlot ? vision.cameraStreams[matchedSlot] : null}
+                  onAssignToSlot={handleAssignToSlot}
+                />
+              );
+            })}
           </div>
         )}
       </section>

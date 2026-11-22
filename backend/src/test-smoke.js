@@ -1,14 +1,18 @@
 const assert = require('assert');
-const http = require('http');
-const { WebSocketServer } = require('ws');
 const { parseDartPayload } = require('./dartParser');
 const { loadCalibration, saveCalibration, resetCalibrationPoints } = require('./calibrationStore');
 const { inspectCameras } = require('./cameraManager');
-const { OpenDartboardClient } = require('./openDartboardClient');
+const {
+  buildForwardHomography,
+  buildInverseHomography,
+  scoreFromBoardCoordinates,
+  triangulateMultiCameraDetections,
+  OpenCVDartsScorer
+} = require('./opencvDartsScorer');
 
 async function runTests() {
   console.log('1. Testing dartParser...');
-  const t20 = parseDartPayload({ segment: 20, multiplier: 3, x: 0.01, y: -0.60 }, 'opendartboard');
+  const t20 = parseDartPayload({ segment: 20, multiplier: 3, x: 0.01, y: -0.60 }, 'vision');
   assert.strictEqual(t20.label, 'T20');
   assert.strictEqual(t20.score, 60);
   assert.strictEqual(t20.segment, 20);
@@ -26,9 +30,14 @@ async function runTests() {
   assert.strictEqual(d16.label, 'D16');
   assert.strictEqual(d16.score, 32);
 
-  const miss = parseDartPayload({ segment: 0, multiplier: 0 }, 'opendartboard');
+  const miss = parseDartPayload({ segment: 0, multiplier: 0 }, 'vision');
   assert.strictEqual(miss.label, 'MISS');
   assert.strictEqual(miss.score, 0);
+
+  // Test coordinate-only parsing
+  const coordOnlyT20 = parseDartPayload({ x: 0.0, y: -0.60 }, 'vision');
+  assert.strictEqual(coordOnlyT20.label, 'T20');
+  assert.strictEqual(coordOnlyT20.score, 60);
 
   console.log('2. Testing calibrationStore & cameraManager...');
   const resetLeft5 = resetCalibrationPoints(null, 'default', 'ring270_left5');
@@ -64,55 +73,55 @@ async function runTests() {
   const saved = saveCalibration(cal);
   assert(saved.updatedAt);
 
-  const camDiag = inspectCameras(resetDefault);
-  assert.strictEqual(camDiag.cameras.length, 3);
+  console.log('3. Testing OpenCV-Darts 4-point Homography & 3-Camera Triangulation Scorer...');
+  const cam1Fwd = buildForwardHomography(cal.cameras.cam1.points);
+  const cam1Inv = buildInverseHomography(cal.cameras.cam1.points);
+  const cam2Fwd = buildForwardHomography(cal.cameras.cam2.points);
+  const cam3Fwd = buildForwardHomography(cal.cameras.cam3.points);
 
-  console.log('3. Testing OpenDartboardClient WebSocket connection & auto-parse...');
-  const mockServer = http.createServer();
-  const wss = new WebSocketServer({ server: mockServer });
+  // Target: Triple 20 at canonical board position (0.0, -0.60)
+  const targetBoard = { x: 0.0, y: -0.60 };
+  const imgPt1 = cam1Fwd(targetBoard.x, targetBoard.y);
+  const roundTrip1 = cam1Inv(imgPt1.x, imgPt1.y);
+  assert(Math.abs(roundTrip1.x - targetBoard.x) < 1e-4, 'Inverse homography X roundtrip accurate');
+  assert(Math.abs(roundTrip1.y - targetBoard.y) < 1e-4, 'Inverse homography Y roundtrip accurate');
 
-  await new Promise((resolve) => mockServer.listen(0, resolve));
-  const mockPort = mockServer.address().port;
+  const imgPt2 = cam2Fwd(targetBoard.x, targetBoard.y);
+  const imgPt3 = cam3Fwd(targetBoard.x, targetBoard.y);
 
-  let receivedDartMsg = null;
-  let receivedCalSync = null;
+  const triangulated = triangulateMultiCameraDetections(
+    [
+      { cameraId: 'cam1', imageTip: imgPt1, confidence: 0.94 },
+      { cameraId: 'cam2', imageTip: imgPt2, confidence: 0.91 },
+      { cameraId: 'cam3', imageTip: imgPt3, confidence: 0.93 }
+    ],
+    cal
+  );
+  assert(triangulated, 'Should triangulate 3 camera detections');
+  assert.strictEqual(triangulated.label, 'T20');
+  assert.strictEqual(triangulated.score, 60);
+  assert.strictEqual(triangulated.method, '3-camera-triangulation');
+  assert.strictEqual(triangulated.camerasUsed.length, 3);
 
-  wss.on('connection', (ws) => {
-    ws.on('message', (msg) => {
-      receivedCalSync = JSON.parse(msg.toString());
-    });
-    ws.send(JSON.stringify({ segment: 19, multiplier: 3, x: -0.18, y: 0.57 }));
-  });
+  const bullScore = scoreFromBoardCoordinates(0.01, -0.01);
+  assert.strictEqual(bullScore.label, 'BULL');
+  assert.strictEqual(bullScore.score, 50);
 
-  const client = new OpenDartboardClient({
-    url: `ws://localhost:${mockPort}`,
-    reconnectIntervalMs: 500
-  });
-
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Timed out waiting for mock OpenDartboard connection')), 4000);
-    client.on('message', (raw) => {
-      receivedDartMsg = parseDartPayload(raw, 'opendartboard');
-      client.sendCalibration(resetDefault);
-      setTimeout(() => {
-        clearTimeout(timer);
-        resolve();
-      }, 100);
-    });
-    client.start();
-  });
-
-  assert(receivedDartMsg, 'Should have received dart message from mock OpenDartboard server');
-  assert.strictEqual(receivedDartMsg.label, 'T19');
-  assert.strictEqual(receivedDartMsg.score, 57);
-  assert(receivedCalSync && receivedCalSync.type === 'calibration_update', 'Should have synced calibration over WS');
-
-  client.stop();
-  wss.close();
-  mockServer.close();
+  const scorer = new OpenCVDartsScorer();
+  const engineScored = scorer.scoreDetection(
+    {
+      detections: [
+        { cameraId: 'cam1', imageTip: imgPt1, confidence: 0.92 },
+        { cameraId: 'cam2', imageTip: imgPt2, confidence: 0.90 }
+      ]
+    },
+    cal
+  );
+  assert.strictEqual(engineScored.label, 'T20');
+  assert.strictEqual(engineScored.method, '2-camera-triangulation');
 
   console.log('4. Testing Express API & Socket.IO server startup and routes...');
-  const { server, odbClient } = require('./server');
+  const { server } = require('./server');
   await new Promise((resolve) => server.listen(0, resolve));
   const apiPort = server.address().port;
   const baseUrl = `http://localhost:${apiPort}`;
@@ -120,14 +129,27 @@ async function runTests() {
   const healthRes = await fetch(`${baseUrl}/api/health`);
   const health = await healthRes.json();
   assert.strictEqual(health.ok, true);
+  assert.strictEqual(health.scorerEngine.ready, true);
 
-  // Simulate 3 darts (T20, S20, T20 = 140)
+  // Test clear & 3-camera vision detection endpoint (/api/vision/detect)
   await fetch(`${baseUrl}/api/log/clear`, { method: 'POST' });
-  await fetch(`${baseUrl}/api/dart/simulate`, {
+  const visionDetectRes = await fetch(`${baseUrl}/api/vision/detect`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ segment: 20, multiplier: 3 })
+    body: JSON.stringify({
+      detections: [
+        { cameraId: 'cam1', imageTip: imgPt1, confidence: 0.95 },
+        { cameraId: 'cam2', imageTip: imgPt2, confidence: 0.93 },
+        { cameraId: 'cam3', imageTip: imgPt3, confidence: 0.94 }
+      ]
+    })
   });
+  const visionDetectData = await visionDetectRes.json();
+  assert.strictEqual(visionDetectData.ok, true);
+  assert.strictEqual(visionDetectData.dart.label, 'T20');
+  assert.strictEqual(visionDetectData.dart.source, 'vision');
+
+  // Simulate 2 more darts (S20, T20 => Total 140)
   await fetch(`${baseUrl}/api/dart/simulate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -167,10 +189,9 @@ async function runTests() {
   // Reset session state cleanly so app starts fresh
   await fetch(`${baseUrl}/api/log/clear`, { method: 'POST' });
 
-  odbClient.stop();
   await new Promise((resolve) => server.close(resolve));
 
-  console.log('All backend smoke and E2E API tests passed!');
+  console.log('All backend smoke, OpenCV-Darts triangulation, and E2E API tests passed!');
 }
 
 runTests().catch((err) => {

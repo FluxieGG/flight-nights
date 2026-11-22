@@ -3,10 +3,10 @@ setlocal
 cd /d "%~dp0"
 
 echo ========================================================
-echo   Smart Darts MVP (Windows 10 PC - Calibration ^& Tester)
+echo   Smart Darts MVP (Windows 10 PC - 3-Camera Vision Scorer)
 echo ========================================================
 echo   Backend API ^& Socket.IO : http://localhost:3001
-echo   OpenDartboard Target    : ws://localhost:13520
+echo   Vision Scorer Engine    : OpenCV-Darts 3-Camera Triangulation
 echo   TV Browser Display URL  : http://localhost:5173
 echo ========================================================
 echo.

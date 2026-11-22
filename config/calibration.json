@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-11-22T03:15:00.844Z",
+  "updatedAt": "2026-11-22T11:59:54.703Z",
   "ringLayout": {
     "id": "ring270_left5",
     "ringType": "270-open-bottom",
@@ -9,7 +9,14 @@
       "start": 135,
       "end": 225
     },
-    "label": "270� Open-Bottom Ring � Top Left of Bar (toward 5)"
+    "label": "270° Open-Bottom Ring · Top Left of Bar (toward 5)"
+  },
+  "visionSettings": {
+    "sensitivity": 26,
+    "minContourPixels": 16,
+    "settleFrames": 3,
+    "autoClearOnPull": true,
+    "resolutionMode": "720p"
   },
   "boardReferencePoints": [
     {
@@ -56,32 +63,34 @@
       "position": "11:30 (toward 5)",
       "mountAngleDeg": 345,
       "devicePath": "USB Camera 0",
+      "deviceId": "",
+      "deviceLabel": "",
       "streamUrl": "",
       "calibrated": true,
       "showOverlay": true,
       "points": [
         {
-          "x": 0.235,
-          "y": 0.2744,
+          "x": 0.5408,
+          "y": 0.1865,
           "label": "20/1"
         },
         {
-          "x": 0.6025,
-          "y": 0.225,
+          "x": 0.7073,
+          "y": 0.523,
           "label": "6/10"
         },
         {
-          "x": 0.7385,
-          "y": 0.6066,
+          "x": 0.4695,
+          "y": 0.7347,
           "label": "3/19"
         },
         {
-          "x": 0.1855,
-          "y": 0.6843,
+          "x": 0.2644,
+          "y": 0.4738,
           "label": "11/14"
         }
       ],
-      "savedAt": "2026-11-22T03:10:58.854Z"
+      "savedAt": "2026-11-22T11:59:54.702Z"
     },
     "cam2": {
       "id": "cam2",
@@ -89,32 +98,34 @@
       "position": "3:40 (over 10)",
       "mountAngleDeg": 110,
       "devicePath": "USB Camera 1",
+      "deviceId": "",
+      "deviceLabel": "",
       "streamUrl": "",
       "calibrated": true,
       "showOverlay": true,
       "points": [
         {
-          "x": 0.7473,
-          "y": 0.3922,
+          "x": 0.5308,
+          "y": 0.2124,
           "label": "20/1"
         },
         {
-          "x": 0.629,
-          "y": 0.7951,
+          "x": 0.7365,
+          "y": 0.5306,
           "label": "6/10"
         },
         {
-          "x": 0.1767,
-          "y": 0.5548,
+          "x": 0.4673,
+          "y": 0.8054,
           "label": "3/19"
         },
         {
-          "x": 0.4134,
-          "y": 0.2744,
+          "x": 0.3268,
+          "y": 0.4776,
           "label": "11/14"
         }
       ],
-      "savedAt": "2026-11-22T03:10:58.854Z"
+      "savedAt": "2026-11-22T11:59:54.702Z"
     },
     "cam3": {
       "id": "cam3",
@@ -122,32 +133,34 @@
       "position": "7:50 (over 16)",
       "mountAngleDeg": 235,
       "devicePath": "USB Camera 2",
+      "deviceId": "",
+      "deviceLabel": "",
       "streamUrl": "",
       "calibrated": true,
       "showOverlay": true,
       "points": [
         {
-          "x": 0.4028,
-          "y": 0.8115,
+          "x": 0.5292,
+          "y": 0.2464,
           "label": "20/1"
         },
         {
-          "x": 0.2527,
-          "y": 0.371,
+          "x": 0.6839,
+          "y": 0.5683,
           "label": "6/10"
         },
         {
-          "x": 0.5936,
-          "y": 0.2297,
+          "x": 0.4636,
+          "y": 0.8158,
           "label": "3/19"
         },
         {
-          "x": 0.8551,
-          "y": 0.5171,
+          "x": 0.2691,
+          "y": 0.4143,
           "label": "11/14"
         }
       ],
-      "savedAt": "2026-11-22T03:10:58.854Z"
+      "savedAt": "2026-11-22T11:59:54.702Z"
     }
   }
 }

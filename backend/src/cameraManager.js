@@ -40,8 +40,8 @@ function inspectCameras(calibration) {
   const definitions = [
     {
       id: 'cam1',
-      defaultName: "Camera 1",
-      defaultPosition: "11:30 (toward 5)",
+      defaultName: 'Camera 1',
+      defaultPosition: '11:30 (toward 5)',
       defaultMountAngleDeg: 345,
       cameraIndex: 0,
       defaultDevice: process.env.CAMERA_1_DEVICE || 'USB Camera 0',
@@ -50,8 +50,8 @@ function inspectCameras(calibration) {
     },
     {
       id: 'cam2',
-      defaultName: "Camera 2",
-      defaultPosition: "3:40 (over 10)",
+      defaultName: 'Camera 2',
+      defaultPosition: '3:40 (over 10)',
       defaultMountAngleDeg: 110,
       cameraIndex: 1,
       defaultDevice: process.env.CAMERA_2_DEVICE || 'USB Camera 1',
@@ -60,8 +60,8 @@ function inspectCameras(calibration) {
     },
     {
       id: 'cam3',
-      defaultName: "Camera 3",
-      defaultPosition: "7:50 (over 16)",
+      defaultName: 'Camera 3',
+      defaultPosition: '7:50 (over 16)',
       defaultMountAngleDeg: 235,
       cameraIndex: 2,
       defaultDevice: process.env.CAMERA_3_DEVICE || 'USB Camera 2',
@@ -73,11 +73,13 @@ function inspectCameras(calibration) {
   const cameras = definitions.map((def) => {
     const saved = camConfigs[def.id] || {};
     const devicePath =
-      saved.devicePath && !String(saved.devicePath).startsWith('/dev/')
+      saved.deviceLabel ||
+      (saved.devicePath && !String(saved.devicePath).startsWith('/dev/')
         ? saved.devicePath
-        : def.defaultDevice;
+        : def.defaultDevice);
+    const deviceId = saved.deviceId || '';
     const streamUrl = saved.streamUrl || def.defaultStream;
-    const hasStream = Boolean(streamUrl && streamUrl.trim().length > 0);
+    const hasStream = Boolean((streamUrl && streamUrl.trim().length > 0) || deviceId);
     const pointsCount = Array.isArray(saved.points) ? saved.points.length : 0;
     const mountAngleDeg =
       typeof saved.mountAngleDeg === 'number' ? saved.mountAngleDeg : def.defaultMountAngleDeg;
@@ -89,13 +91,15 @@ function inspectCameras(calibration) {
       mountAngleDeg,
       cameraIndex: def.cameraIndex,
       devicePath,
+      deviceId,
+      deviceLabel: saved.deviceLabel || '',
       streamUrl,
       deviceExists: hasStream,
       hasStream,
-      status: hasStream ? 'hardware_ready' : 'simulated_preview',
+      status: hasStream ? 'hardware_ready' : 'ready_for_usb',
       statusLabel: hasStream
-        ? `Stream Active (${devicePath})`
-        : `Ready for Windows USB / Simulated Feed (${devicePath})`,
+        ? `USB Camera Mapped (${devicePath})`
+        : `Ready for Windows 10 DirectShow USB (${devicePath})`,
       sensorModel: 'OV9732 720p USB UVC Camera (Windows 10 DirectShow)',
       usbBusTip: def.usbBusTip,
       pointsCount,

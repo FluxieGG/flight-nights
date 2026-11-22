@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   RotateCcw,
   FastForward,
@@ -9,9 +9,13 @@ import {
   Code2,
   Shuffle,
   CheckCircle2,
-  Cpu,
+  Camera,
+  Eye,
+  RefreshCw,
   Lock,
-  Unlock
+  Unlock,
+  Sliders,
+  Sparkles
 } from 'lucide-react';
 import InteractiveDartboard from './InteractiveDartboard';
 import { BOARD_SECTORS } from '../utils/dartboardMath';
@@ -27,6 +31,70 @@ const QUICK_TEST_DARTS = [
   { label: 'MISS', desc: '0 pts', payload: { segment: 0, multiplier: 0 }, style: 'border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25' }
 ];
 
+function MiniCameraVisionFeed({ slotKey, slotNumber, color, stream, status, cameraConfig }) {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream || null;
+    }
+  }, [stream]);
+
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/90 p-2.5">
+      <div className="relative h-14 w-20 shrink-0 overflow-hidden rounded-lg border border-slate-800 bg-slate-900">
+        {stream && status?.active ? (
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center text-[10px] font-bold text-slate-500">
+            <Camera className="h-4 w-4 mb-0.5 text-slate-600" />
+            <span>Standby</span>
+          </div>
+        )}
+        {status?.lastTip && (
+          <span
+            className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-emerald-400 shadow"
+            style={{
+              left: `${status.lastTip.x * 100}%`,
+              top: `${status.lastTip.y * 100}%`
+            }}
+          />
+        )}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-xs font-black uppercase" style={{ color }}>
+            Cam {slotNumber}
+          </span>
+          <span
+            className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+              status?.active
+                ? 'bg-emerald-500/20 text-emerald-300'
+                : 'bg-slate-800 text-slate-400'
+            }`}
+          >
+            {status?.active ? status.resolution || 'LIVE' : 'Standby'}
+          </span>
+        </div>
+        <div className="mt-0.5 truncate text-[11px] text-slate-400">
+          {cameraConfig?.position || `Mount #${slotNumber}`}
+        </div>
+        <div className="mt-1 flex items-center justify-between font-mono text-[10px] text-slate-500">
+          <span>Diff: {status?.diffScore || 0}px</span>
+          <span>{Array.isArray(cameraConfig?.points) && cameraConfig.points.length === 4 ? '4/4 Cal' : 'Uncal'}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LiveScoreView({
   turnNumber = 1,
   currentTurn = [],
@@ -40,9 +108,13 @@ export default function LiveScoreView({
   onNextTurn,
   onClearAllLogs,
   onOpenDevPinModal,
-  isDevUnlocked
+  isDevUnlocked,
+  vision,
+  calibration,
+  onSwitchToCalibration
 }) {
   const [expandedLogId, setExpandedLogId] = useState(null);
+  const [showVisionControls, setShowVisionControls] = useState(false);
 
   const handleRandomDart = () => {
     const isBull = Math.random() < 0.1;
@@ -56,20 +128,22 @@ export default function LiveScoreView({
     onSimulateDart({ segment: randomSector, multiplier: mult });
   };
 
-  // Calibration verification test points recommended in Step 5 of the spec: Bullseye, 20, 3, 11, 6
   const VERIFICATION_TARGETS = [
     { label: 'Bullseye', payload: { segment: 25, multiplier: 2 } },
-    { label: 'Top (20)', payload: { segment: 20, multiplier: 1 } },
-    { label: 'Bottom (3)', payload: { segment: 3, multiplier: 1 } },
-    { label: 'Left (11)', payload: { segment: 11, multiplier: 1 } },
-    { label: 'Right (6)', payload: { segment: 6, multiplier: 1 } }
+    { label: 'Top (T20)', payload: { segment: 20, multiplier: 3 } },
+    { label: 'Bottom (T19)', payload: { segment: 19, multiplier: 3 } },
+    { label: 'Left (D11)', payload: { segment: 11, multiplier: 2 } },
+    { label: 'Right (D6)', payload: { segment: 6, multiplier: 2 } }
   ];
 
-  // Format summary banner string like: "T20 | S20 | T20 — Total: 140"
   const turnSummaryText =
     currentTurn.length > 0
       ? `${currentTurn.map((d) => d.label).join(' | ')} — Total: ${currentTurnTotal}`
       : 'Waiting for Dart 1...';
+
+  const activeCameraCount = vision
+    ? Object.values(vision.cameraStatusMap).filter((c) => c.active).length
+    : 0;
 
   return (
     <div className="mx-auto max-w-[1800px] space-y-5 px-4 py-5 lg:px-6">
@@ -85,8 +159,20 @@ export default function LiveScoreView({
             </h2>
           </div>
 
-          {/* Testing Controls: Undo Last Dart & Next Turn / Clear & Dev Button */}
+          {/* Testing Controls: Capture Empty Board, Undo Last Dart, Next Turn / Clear & Dev Button */}
           <div className="flex flex-wrap items-center gap-3">
+            {vision && (
+              <button
+                type="button"
+                onClick={vision.captureEmptyBoardReference}
+                title="Capture clean empty board reference frame across all connected USB cameras"
+                className="flex items-center gap-2 rounded-xl border border-cyan-500/40 bg-cyan-500/15 px-3.5 py-2.5 text-xs font-extrabold text-cyan-200 transition hover:bg-cyan-500/25 active:scale-95 sm:text-sm"
+              >
+                <RefreshCw className="h-4 w-4 text-cyan-400" />
+                <span>Recalibrate Empty Board</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={onOpenDevPinModal}
@@ -162,12 +248,16 @@ export default function LiveScoreView({
                   {dart && (
                     <span
                       className={`rounded-md px-2 py-0.5 text-xs font-bold uppercase ${
-                        dart.source === 'opendartboard'
+                        dart.source === 'vision' || dart.source === 'vision-test'
                           ? 'bg-emerald-500/20 text-emerald-300'
                           : 'bg-cyan-500/20 text-cyan-300'
                       }`}
                     >
-                      {dart.source === 'opendartboard' ? 'Camera Vision' : 'Simulated'}
+                      {dart.source === 'vision'
+                        ? `OpenCV (${dart.camerasUsed?.length || 3} Cam)`
+                        : dart.source === 'vision-test'
+                        ? '3-Cam CV Test'
+                        : 'Simulated'}
                     </span>
                   )}
                 </div>
@@ -235,38 +325,197 @@ export default function LiveScoreView({
 
             <div className="border-t border-emerald-800/50 pt-2 text-xs font-semibold text-emerald-200/80">
               {currentTurn.length === 3
-                ? 'Turn complete — Throw next dart or press Next Turn'
+                ? 'Turn complete — Pull darts from board or press Next Turn'
                 : `${3 - currentTurn.length} dart${3 - currentTurn.length === 1 ? '' : 's'} remaining in turn`}
             </div>
           </div>
         </div>
       </section>
 
-      {/* OUT-OF-THE-BOX SIMULATE DART / TEST MODE PANEL */}
+      {/* LIVE 3-CAMERA OPENCV-DARTS VISION MONITOR BAR */}
+      {vision && (
+        <section className="rounded-2xl border border-slate-800 bg-slate-900/85 p-4 shadow-lg">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-emerald-500/40 bg-emerald-500/15 text-emerald-400">
+                <Eye className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-white">
+                    OpenCV-Darts 3-Camera Vision Monitor
+                  </h3>
+                  <span className="rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 font-mono text-xs font-bold text-emerald-300">
+                    {vision.visionStateLabel}
+                  </span>
+                  <span className="font-mono text-xs text-slate-400">
+                    {activeCameraCount}/3 USB Cameras Active · {vision.fps} FPS
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Real-time background subtraction, contour PCA tip extraction &amp; 3-camera homography triangulation
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => vision.scanWindowsCameras(true)}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-200 transition hover:bg-slate-700"
+              >
+                <Camera className="h-3.5 w-3.5 text-cyan-400" />
+                <span>Connect USB Cameras</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => vision.setVisionArmed((v) => !v)}
+                className={`rounded-xl border px-3 py-1.5 text-xs font-black transition ${
+                  vision.visionArmed
+                    ? 'border-emerald-500/50 bg-emerald-500/20 text-emerald-300'
+                    : 'border-amber-500/50 bg-amber-500/20 text-amber-300'
+                }`}
+              >
+                {vision.visionArmed ? 'Vision: ARMED' : 'Vision: PAUSED'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowVisionControls((s) => !s)}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-200 transition hover:bg-slate-700"
+              >
+                <Sliders className="h-3.5 w-3.5 text-emerald-400" />
+                <span>Vision Settings</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 3 Mini Live Camera Previews */}
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <MiniCameraVisionFeed
+              slotKey="cam1"
+              slotNumber={1}
+              color="#10b981"
+              stream={vision.cameraStreams.cam1}
+              status={vision.cameraStatusMap.cam1}
+              cameraConfig={calibration?.cameras?.cam1}
+            />
+            <MiniCameraVisionFeed
+              slotKey="cam2"
+              slotNumber={2}
+              color="#38bdf8"
+              stream={vision.cameraStreams.cam2}
+              status={vision.cameraStatusMap.cam2}
+              cameraConfig={calibration?.cameras?.cam2}
+            />
+            <MiniCameraVisionFeed
+              slotKey="cam3"
+              slotNumber={3}
+              color="#f59e0b"
+              stream={vision.cameraStreams.cam3}
+              status={vision.cameraStatusMap.cam3}
+              cameraConfig={calibration?.cameras?.cam3}
+            />
+          </div>
+
+          {showVisionControls && (
+            <div className="mt-3 grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950 p-3.5 text-xs sm:grid-cols-3">
+              <div>
+                <div className="flex items-center justify-between font-bold text-slate-300">
+                  <span>Detection Sensitivity Threshold:</span>
+                  <span className="font-mono text-emerald-300">{vision.sensitivity}</span>
+                </div>
+                <input
+                  type="range"
+                  min="14"
+                  max="55"
+                  value={vision.sensitivity}
+                  onChange={(e) => vision.setSensitivity(Number(e.target.value))}
+                  className="mt-1.5 w-full accent-emerald-400"
+                />
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  Lower = more sensitive to thin dart tips; Higher = ignores ambient light flicker.
+                </p>
+              </div>
+
+              <div className="flex flex-col justify-between">
+                <span className="font-bold text-slate-300">Auto-Clear When Darts Pulled:</span>
+                <label className="mt-1.5 flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={vision.autoClearOnPull}
+                    onChange={(e) => vision.setAutoClearOnPull(e.target.checked)}
+                    className="h-4 w-4 rounded accent-emerald-500"
+                  />
+                  <span className="text-slate-200 font-semibold">
+                    Automatically advance turn when board returns to empty state
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex flex-col justify-between">
+                <span className="font-bold text-slate-300">Windows USB Hub Bandwidth Mode:</span>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => vision.setResolutionMode('720p')}
+                    className={`rounded-lg border px-3 py-1 font-bold ${
+                      vision.resolutionMode === '720p'
+                        ? 'border-emerald-500 bg-emerald-500/20 text-emerald-300'
+                        : 'border-slate-700 bg-slate-900 text-slate-400'
+                    }`}
+                  >
+                    720p HD (USB 3.0)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => vision.setResolutionMode('480p')}
+                    className={`rounded-lg border px-3 py-1 font-bold ${
+                      vision.resolutionMode === '480p'
+                        ? 'border-emerald-500 bg-emerald-500/20 text-emerald-300'
+                        : 'border-slate-700 bg-slate-900 text-slate-400'
+                    }`}
+                  >
+                    480p Safe Mode (Single USB Hub)
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* OUT-OF-THE-BOX SIMULATE DART / 3-CAMERA CV PIPELINE TEST PANEL */}
       {simulateMode && (
         <section className="rounded-2xl border border-cyan-500/40 bg-cyan-950/20 p-4 shadow-md">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <Zap className="h-5 w-5 text-cyan-400" />
               <span className="text-sm font-extrabold uppercase tracking-wider text-cyan-300">
-                Simulate Dart / Test Mode
+                Vision Pipeline Self-Test &amp; Manual Simulator
               </span>
               <span className="hidden text-xs text-slate-400 md:inline">
-                (Test scoring &amp; detection logs immediately before cameras or OpenDartboard are connected)
+                (Test real 3-camera homography &amp; triangulation math or simulate throws)
               </span>
             </div>
 
-            {/* Step 5 Calibration Alignment Verification Quick Buttons */}
+            {/* 3-Camera Synthetic CV Pipeline Verification Buttons */}
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-xs font-bold text-slate-400">
-                Alignment Check:
+              <span className="mr-1 flex items-center gap-1 text-xs font-bold text-emerald-300">
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>3-Cam Vision Triangulation Test:</span>
               </span>
               {VERIFICATION_TARGETS.map((t) => (
                 <button
                   key={t.label}
                   type="button"
-                  onClick={() => onSimulateDart(t.payload)}
-                  className="rounded-lg border border-slate-700 bg-slate-900/90 px-2.5 py-1 text-xs font-bold text-slate-200 transition hover:border-cyan-400 hover:text-cyan-300"
+                  onClick={() =>
+                    vision
+                      ? vision.runSyntheticVisionTest(t.payload.segment, t.payload.multiplier)
+                      : onSimulateDart(t.payload)
+                  }
+                  className="rounded-lg border border-emerald-500/40 bg-emerald-950/60 px-2.5 py-1 text-xs font-bold text-emerald-200 transition hover:border-emerald-400 hover:bg-emerald-500/25"
                 >
                   {t.label}
                 </button>
@@ -311,7 +560,7 @@ export default function LiveScoreView({
                 Interactive SVG Dartboard
               </h3>
               <p className="text-xs text-slate-400">
-                Pulses detected segment in real time &amp; plots current turn markers
+                Pulses triangulated segment in real time &amp; plots current turn markers
               </p>
             </div>
             {highlightedDart && (
@@ -343,7 +592,7 @@ export default function LiveScoreView({
 
             {turnHistory.length === 0 ? (
               <p className="text-xs text-slate-500">
-                Completed 3-dart turns will appear here when you throw a 4th dart or click &ldquo;Next Turn / Clear&rdquo;.
+                Completed 3-dart turns will appear here when you pull your darts, throw a 4th dart, or click &ldquo;Next Turn / Clear&rdquo;.
               </p>
             ) : (
               <div className="flex gap-2 overflow-x-auto pb-1">
@@ -376,7 +625,7 @@ export default function LiveScoreView({
                   Detection Accuracy Log (Last 20 Darts)
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Verify OpenDartboard segment, multiplier, coordinates, and raw JSON payloads
+                  Verify OpenCV-Darts segment, multiplier, triangulated coordinates, confidence, and raw JSON payloads
                 </p>
               </div>
             </div>
@@ -405,7 +654,7 @@ export default function LiveScoreView({
                 No Darts Detected Yet
               </p>
               <p className="mt-1 max-w-md text-xs text-slate-400 sm:text-sm">
-                Throw a dart in front of your calibrated cameras, click any segment on the interactive SVG dartboard, or press one of the Simulate Dart buttons above.
+                Throw a dart in front of your calibrated USB cameras, run a 3-Cam Vision Triangulation Test above, or click any segment on the interactive SVG dartboard.
               </p>
             </div>
           ) : (
@@ -441,7 +690,7 @@ export default function LiveScoreView({
                         </span>
 
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="text-sm font-extrabold text-white sm:text-base">
                               {item.ringName}
                             </span>
@@ -451,6 +700,11 @@ export default function LiveScoreView({
                             <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-bold text-slate-300">
                               Turn #{item.turnNumber} · Dart {item.dartIndex}
                             </span>
+                            {item.method && item.method !== 'simulated' && (
+                              <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
+                                {item.method} ({Math.round((item.confidence || 0.95) * 100)}%)
+                              </span>
+                            )}
                           </div>
 
                           <div className="mt-1 flex flex-wrap items-center gap-3 font-mono text-xs text-slate-400">
@@ -461,7 +715,7 @@ export default function LiveScoreView({
                             </span>
                             <span
                               className={
-                                item.source === 'opendartboard'
+                                item.source === 'vision' || item.source === 'vision-test'
                                   ? 'text-emerald-400'
                                   : 'text-cyan-400'
                               }

@@ -323,28 +323,27 @@ function RingMountDiagram({ cameras, activeLayoutId, onSelectLayout }) {
 }
 
 /**
- * Renders a Windows 10 USB camera feed, an MJPEG stream feed, or a realistic simulated OV9732
+ * Renders a persistent Windows 10 USB camera feed, an MJPEG stream feed, or a realistic simulated OV9732
  * camera perspective dartboard feed, and overlays the live calibrated dartboard rings computed
  * from the 4 clicked reference points.
  */
 function CameraCalibrationCanvas({
   slotNumber,
   slotKey,
-  slotTitle,
   slotColor,
   slotPositionTip,
   camera,
   diagnostic,
+  persistentStream,
+  cameraRuntimeStatus,
   windowsVideoDevices,
-  assignedDeviceId,
   onAssignDevice,
   onUpdatePoints,
   onToggleOverlay,
   onUpdateStreamUrl,
   onUpdateMountAngle,
   onSaveSingleCamera,
-  isSaved,
-  savedTimestamp
+  isSaved
 }) {
   const containerRef = useRef(null);
   const videoRef = useRef(null);
@@ -353,18 +352,6 @@ function CameraCalibrationCanvas({
   const [showSettings, setShowSettings] = useState(false);
   const [useBrowserWebcam, setUseBrowserWebcam] = useState(true);
   const [justSaved, setJustSaved] = useState(false);
-  const [selectedDeviceId, setSelectedDeviceId] = useState(
-    assignedDeviceId || (windowsVideoDevices[slotNumber - 1]?.deviceId) || ''
-  );
-  const [webcamError, setWebcamError] = useState(null);
-
-  useEffect(() => {
-    if (assignedDeviceId) {
-      setSelectedDeviceId(assignedDeviceId);
-    } else if (windowsVideoDevices[slotNumber - 1]?.deviceId) {
-      setSelectedDeviceId(windowsVideoDevices[slotNumber - 1].deviceId);
-    }
-  }, [assignedDeviceId, windowsVideoDevices, slotNumber]);
 
   const points = Array.isArray(camera?.points) ? camera.points : [];
   const showOverlay = camera?.showOverlay !== false;
@@ -377,43 +364,16 @@ function CameraCalibrationCanvas({
       ? camera.mountAngleDeg
       : DEFAULT_MOUNT_ANGLES[slotKey] || 345;
 
-  // Connect to selected Windows 10 USB UVC camera via MediaDevices API
+  // Bind persistent MediaStream from useVisionScorer to the video element
   useEffect(() => {
-    let activeStream = null;
-    let isMounted = true;
-
-    if (useBrowserWebcam && navigator.mediaDevices?.getUserMedia) {
-      const deviceIdToUse = selectedDeviceId || windowsVideoDevices[slotNumber - 1]?.deviceId;
-      const videoConstraint = deviceIdToUse
-        ? { deviceId: { exact: deviceIdToUse }, width: { ideal: 1280 }, height: { ideal: 720 } }
-        : { width: { ideal: 1280 }, height: { ideal: 720 } };
-
-      navigator.mediaDevices
-        .getUserMedia({ video: videoConstraint, audio: false })
-        .then((stream) => {
-          if (!isMounted) {
-            stream.getTracks().forEach((t) => t.stop());
-            return;
-          }
-          activeStream = stream;
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-          }
-          setWebcamError(null);
-        })
-        .catch((err) => {
-          if (!isMounted) return;
-          setWebcamError(err.message || `Camera ${slotNumber} hardware feed not accessible`);
-        });
-    }
-
-    return () => {
-      isMounted = false;
-      if (activeStream) {
-        activeStream.getTracks().forEach((t) => t.stop());
+    if (videoRef.current) {
+      if (useBrowserWebcam && persistentStream) {
+        videoRef.current.srcObject = persistentStream;
+      } else {
+        videoRef.current.srcObject = null;
       }
-    };
-  }, [useBrowserWebcam, selectedDeviceId, slotNumber, windowsVideoDevices]);
+    }
+  }, [useBrowserWebcam, persistentStream]);
 
   const getNormalizedCoords = (clientX, clientY) => {
     if (!containerRef.current) return null;
@@ -455,17 +415,16 @@ function CameraCalibrationCanvas({
     }
   };
 
-  // Compute 4-point perspective homography when all 4 reference points are placed
   const W = 400;
   const H = 300;
   const projectUserFn = isComplete ? buildBoardHomography(points) : null;
 
-  // Simulated background board projection computed dynamically from this camera's mountAngleDeg
   const presetPts = computePerspectivePresetPoints(mountAngleDeg);
   const projectBgFn = buildBoardHomography(presetPts);
 
   const angleInGap = isAngleInOpenBottom(mountAngleDeg);
   const angleInBar = isAngleInTopBar(mountAngleDeg);
+  const isUsbActive = Boolean(useBrowserWebcam && persistentStream && cameraRuntimeStatus?.active);
 
   return (
     <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-900/90 shadow-xl overflow-hidden">
@@ -491,13 +450,11 @@ function CameraCalibrationCanvas({
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              {useBrowserWebcam
-                ? selectedDeviceId && windowsVideoDevices.length > 0
-                  ? `Hardware: Camera ${windowsVideoDevices.findIndex((d) => d.deviceId === selectedDeviceId) + 1 || slotNumber} (Active USB)`
-                  : `Camera ${slotNumber} Live USB Feed`
+              {isUsbActive
+                ? `Live Windows 10 USB (${cameraRuntimeStatus?.resolution || '720p'})`
                 : camera?.streamUrl && !streamError
                 ? `Live Stream: ${camera.streamUrl}`
-                : diagnostic?.statusLabel || 'Simulated OV9732 Feed'}
+                : diagnostic?.statusLabel || 'Simulated OV9732 Feed (Plug in USB Camera)'}
             </p>
           </div>
         </div>
@@ -557,7 +514,7 @@ function CameraCalibrationCanvas({
         }`}
       >
         {/* 1. Optional Live MJPEG Stream Image if configured */}
-        {camera?.streamUrl && !streamError && !useBrowserWebcam && (
+        {camera?.streamUrl && !streamError && !isUsbActive && (
           <img
             src={camera.streamUrl}
             alt={camera.name}
@@ -566,7 +523,7 @@ function CameraCalibrationCanvas({
           />
         )}
 
-        {/* 2. Optional Windows 10 DirectShow / UVC USB Webcam Feed */}
+        {/* 2. Persistent Windows 10 DirectShow / UVC USB Webcam Feed */}
         {useBrowserWebcam && (
           <video
             ref={videoRef}
@@ -582,8 +539,8 @@ function CameraCalibrationCanvas({
           viewBox={`0 0 ${W} ${H}`}
           className="absolute inset-0 h-full w-full"
         >
-          {/* When no live stream or webcam is active, render a realistic dark camera frame of an illuminated dartboard */}
-          {(!camera?.streamUrl || streamError) && !useBrowserWebcam && projectBgFn && (
+          {/* When no live USB stream or MJPEG stream is active, render a realistic dark camera frame of an illuminated dartboard */}
+          {(!camera?.streamUrl || streamError) && !isUsbActive && projectBgFn && (
             <g opacity="0.7">
               <rect width={W} height={H} fill="#050811" />
 
@@ -934,7 +891,7 @@ function CameraCalibrationCanvas({
           <button
             type="button"
             onClick={() => setShowSettings(!showSettings)}
-            title="Mount angle, Windows 10 USB Camera, or MJPEG Stream URL"
+            title="Mount angle, Windows 10 USB Camera assignment, or MJPEG Stream URL"
             className={`rounded-lg border p-1.5 transition ${
               showSettings
                 ? 'border-cyan-500/50 bg-cyan-500/20 text-cyan-300'
@@ -1017,39 +974,38 @@ function CameraCalibrationCanvas({
               }`}
             >
               <Video className="h-3 w-3" />
-              <span>{useBrowserWebcam ? 'Stop Live USB Feed' : 'Enable Live USB Feed'}</span>
+              <span>{useBrowserWebcam ? 'Live USB Enabled' : 'Enable Live USB Feed'}</span>
             </button>
           </div>
 
           {windowsVideoDevices.length > 0 && (
             <div>
               <span className="mb-1 block font-bold text-slate-300">
-                Assign USB Camera Device to Camera {slotNumber}:
+                Assign Physical USB Camera to Camera {slotNumber}:
               </span>
               <select
-                value={selectedDeviceId}
+                value={camera?.deviceId || windowsVideoDevices[slotNumber - 1]?.deviceId || ''}
                 onChange={(e) => {
-                  setSelectedDeviceId(e.target.value);
                   if (onAssignDevice) onAssignDevice(slotKey, e.target.value);
                 }}
                 className="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:border-emerald-500 focus:outline-none"
               >
                 {windowsVideoDevices.map((dev, i) => (
                   <option key={dev.deviceId || i} value={dev.deviceId}>
-                    Camera {i + 1} ({dev.label || `USB Video Device #${i + 1}`})
+                    Camera #{i + 1} ({dev.label || `USB Video Device #${i + 1}`})
                   </option>
                 ))}
               </select>
             </div>
           )}
 
-          {webcamError && (
-            <p className="text-rose-400">{webcamError}</p>
+          {cameraRuntimeStatus?.error && (
+            <p className="text-amber-400">{cameraRuntimeStatus.error}</p>
           )}
 
           <div>
             <span className="mb-1 block font-bold text-slate-400">
-              Or OpenDartboard MJPEG Stream URL:
+              Or Optional HTTP/MJPEG Camera Stream URL:
             </span>
             <input
               type="text"
@@ -1074,7 +1030,8 @@ export default function CalibrationView({
   onSaveCalibration,
   onSaveSingleCamera,
   onResetCalibration,
-  onTestCameras
+  onTestCameras,
+  vision
 }) {
   const [localCal, setLocalCal] = useState(calibration);
   const [saveBanner, setSaveBanner] = useState(null);
@@ -1084,24 +1041,6 @@ export default function CalibrationView({
     cam2: true,
     cam3: true
   });
-  const [windowsVideoDevices, setWindowsVideoDevices] = useState([]);
-  const [assignedDeviceMap, setAssignedDeviceMap] = useState({});
-
-  const scanWindowsBrowserCameras = async () => {
-    if (navigator.mediaDevices?.enumerateDevices) {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevs = devices.filter((d) => d.kind === 'videoinput');
-        setWindowsVideoDevices(videoDevs);
-      } catch {
-        setWindowsVideoDevices([]);
-      }
-    }
-  };
-
-  useEffect(() => {
-    scanWindowsBrowserCameras();
-  }, []);
 
   useEffect(() => {
     if (calibration) {
@@ -1115,6 +1054,7 @@ export default function CalibrationView({
   }
 
   const activeLayoutId = localCal.ringLayout?.id || 'ring270_left5';
+  const windowsVideoDevices = vision?.windowsVideoDevices || [];
 
   const diagnosticsMap = {};
   if (cameraDiagnostics?.cameras) {
@@ -1204,19 +1144,28 @@ export default function CalibrationView({
     setSaveBanner(null);
   };
 
-  const handleAssignDevice = (camId, deviceId) => {
-    setAssignedDeviceMap((prev) => ({ ...prev, [camId]: deviceId }));
+  const handleAssignDevice = async (camId, deviceId) => {
+    if (vision?.assignDeviceToSlot) {
+      await vision.assignDeviceToSlot(camId, deviceId);
+      setSaveBanner({
+        type: 'success',
+        text: `Assigned USB Camera to ${camId.toUpperCase()} and persisted mapping to config/calibration.json.`
+      });
+    }
   };
 
   const handleSaveAll = async () => {
     const result = await onSaveCalibration(localCal);
+    if (vision?.captureEmptyBoardReference) {
+      vision.captureEmptyBoardReference();
+    }
     setIsDirty(false);
     setSavedCameras({ cam1: true, cam2: true, cam3: true });
     setSaveBanner({
       type: 'success',
       text:
         result?.syncResult?.message ||
-        `✓ All 3 cameras (Camera 1, Camera 2, Camera 3) saved to config/calibration.json at ${new Date().toLocaleTimeString()}!`
+        `✓ All 3 cameras saved to config/calibration.json and loaded into OpenCV-Darts Triangulation Scorer!`
     });
   };
 
@@ -1228,10 +1177,13 @@ export default function CalibrationView({
     } else {
       await onSaveCalibration(localCal);
     }
+    if (vision?.captureEmptyBoardReference) {
+      vision.captureEmptyBoardReference();
+    }
     setSavedCameras((prev) => ({ ...prev, [camId]: true }));
     setSaveBanner({
       type: 'success',
-      text: `✓ Camera ${camNum} calibration saved successfully to config/calibration.json at ${new Date().toLocaleTimeString()}!`
+      text: `✓ Camera ${camNum} homography saved to config/calibration.json and active in OpenCV-Darts Scorer!`
     });
   };
 
@@ -1248,11 +1200,11 @@ export default function CalibrationView({
   };
 
   const handleScanCameras = async () => {
-    await scanWindowsBrowserCameras();
+    const devs = vision?.scanWindowsCameras ? await vision.scanWindowsCameras(true) : [];
     await onTestCameras();
     setSaveBanner({
       type: 'info',
-      text: `Scanned Windows 10 USB cameras (${windowsVideoDevices.length} browser videoinput device(s) found; Camera 1, Camera 2, Camera 3 ready).`
+      text: `Scanned Windows 10 USB cameras (${devs.length} physical USB video device(s) detected).`
     });
   };
 
@@ -1272,18 +1224,18 @@ export default function CalibrationView({
           <div>
             <div className="flex items-center gap-2.5">
               <span className="rounded-lg bg-emerald-500/20 px-2.5 py-1 text-xs font-black uppercase tracking-wider text-emerald-300">
-                3 FIXED BOXES · FORCED 1, 2, 3 ALIGNMENT
+                3 FIXED BOXES · OPENCV-DARTS 4-POINT HOMOGRAPHY
               </span>
               <h2 className="text-xl font-black text-white sm:text-2xl">
                 Camera Calibration (Camera 1 → Camera 2 → Camera 3)
               </h2>
             </div>
             <p className="mt-1 text-xs text-slate-300 sm:text-sm">
-              Each camera is forced into a fixed box below:{' '}
+              Each camera is mapped to a fixed box below:{' '}
               <strong className="text-emerald-400">Box 1 (Camera 1)</strong> →{' '}
               <strong className="text-sky-400">Box 2 (Camera 2)</strong> →{' '}
               <strong className="text-amber-400">Box 3 (Camera 3)</strong>.{' '}
-              Click the <strong className="text-white">4 Double-ring intersections</strong> in clockwise order (#1 20/1, #2 6/10, #3 3/19, #4 11/14), then click <strong className="text-white">Save Camera</strong> in each box.
+              Click the <strong className="text-white">4 Double-ring intersections</strong> in clockwise order (#1 20/1, #2 6/10, #3 3/19, #4 11/14), then click <strong className="text-white">Save Camera</strong>.
             </p>
           </div>
 
@@ -1439,8 +1391,9 @@ export default function CalibrationView({
               slotPositionTip={slot.positionTip}
               camera={cam}
               diagnostic={diagnosticsMap[slot.key]}
+              persistentStream={vision?.cameraStreams?.[slot.key]}
+              cameraRuntimeStatus={vision?.cameraStatusMap?.[slot.key]}
               windowsVideoDevices={windowsVideoDevices}
-              assignedDeviceId={assignedDeviceMap[slot.key]}
               onAssignDevice={handleAssignDevice}
               onUpdatePoints={handleUpdatePoints}
               onToggleOverlay={handleToggleOverlay}
@@ -1448,7 +1401,6 @@ export default function CalibrationView({
               onUpdateMountAngle={handleUpdateMountAngle}
               onSaveSingleCamera={handleSaveCamera}
               isSaved={isCamSaved}
-              savedTimestamp={cam.savedAt}
             />
           );
         })}

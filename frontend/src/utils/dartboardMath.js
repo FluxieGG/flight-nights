@@ -5,7 +5,7 @@ export const BOARD_SECTORS = [
 
 // Normalized radii where 1.0 = outer edge of Double ring (170mm standard)
 export const BOARD_RADII = {
-  INNER_BULL: 0.045,   // slightly enlarged for TV readability
+  INNER_BULL: 0.045,   // slightly enlarged for TV readability & 1:1 visual calibration
   OUTER_BULL: 0.110,
   TRIPLE_INNER: 0.565,
   TRIPLE_OUTER: 0.635,
@@ -145,11 +145,10 @@ export function computeTriangulationMetrics(angles) {
 }
 
 /**
- * Projects the 4 canonical outer-double-ring intersections (20/1, 6/10, 3/19, 11/14)
- * from a 3D camera mounted on the ring light at `mountAngleDeg` (0 = 12 o'clock, clockwise)
- * onto a normalized 4:3 camera image [0..1] x [0..1].
+ * Projects a 3D point (bx, by, bz) in dartboard space (where z=0 is the board plane and z>0 sticks out toward the player)
+ * onto a normalized 4:3 camera image [0..1] x [0..1] mounted on the ring light at `mountAngleDeg`.
  */
-export function computePerspectivePresetPoints(mountAngleDeg = 345) {
+export function project3DPointToCamera(bx, by, bz = 0, mountAngleDeg = 345) {
   const theta = (normalizeDeg(mountAngleDeg) * Math.PI) / 180;
   const Rc = 1.35;
   const Zc = 2.6;
@@ -175,25 +174,37 @@ export function computePerspectivePresetPoints(mountAngleDeg = 345) {
     z: r.x * f.y - r.y * f.x
   };
 
+  const vx = bx - Cx;
+  const vy = by - Cy;
+  const vz = bz - Cz;
+
+  const xCam = vx * r.x + vy * r.y + vz * r.z;
+  const yCam = vx * d.x + vy * d.y + vz * d.z;
+  const zCam = Math.max(0.2, vx * f.x + vy * f.y + vz * f.z);
+
+  const u = Math.max(0.02, Math.min(0.98, 0.5 + fx * (xCam / zCam)));
+  const v = Math.max(0.02, Math.min(0.98, 0.5 + fy * (yCam / zCam)));
+
+  return {
+    x: Number(u.toFixed(4)),
+    y: Number(v.toFixed(4))
+  };
+}
+
+/**
+ * Projects the 4 canonical outer-double-ring intersections (20/1, 6/10, 3/19, 11/14)
+ * from a 3D camera mounted on the ring light at `mountAngleDeg` (0 = 12 o'clock, clockwise)
+ * onto a normalized 4:3 camera image [0..1] x [0..1].
+ */
+export function computePerspectivePresetPoints(mountAngleDeg = 345) {
   return CALIBRATION_REFERENCE_TARGETS.map((target) => {
     const rad = ((target.angleDeg - 90) * Math.PI) / 180;
     const bx = Math.cos(rad);
     const by = Math.sin(rad);
-
-    const vx = bx - Cx;
-    const vy = by - Cy;
-    const vz = 0 - Cz;
-
-    const xCam = vx * r.x + vy * r.y + vz * r.z;
-    const yCam = vx * d.x + vy * d.y + vz * d.z;
-    const zCam = Math.max(0.2, vx * f.x + vy * f.y + vz * f.z);
-
-    const u = Math.max(0.05, Math.min(0.95, 0.5 + fx * (xCam / zCam)));
-    const v = Math.max(0.05, Math.min(0.95, 0.5 + fy * (yCam / zCam)));
-
+    const pt = project3DPointToCamera(bx, by, 0, mountAngleDeg);
     return {
-      x: Number(u.toFixed(4)),
-      y: Number(v.toFixed(4)),
+      x: pt.x,
+      y: pt.y,
       label: target.shortLabel.replace(/\s+/g, '')
     };
   });
@@ -244,8 +255,7 @@ export function createSectorPath(cx, cy, innerRadius, outerRadius, startAngleDeg
 
 /**
  * Solves an 8x8 linear system A * h = b via Gaussian elimination with partial pivoting
- * to find the 3x3 planar homography matrix H mapping canonical board coordinates (bx, by)
- * to normalized camera image coordinates (ix, iy).
+ * to find the 3x3 planar homography matrix H.
  */
 function solveLinearSystem8x8(A, b) {
   const n = 8;
@@ -300,7 +310,6 @@ export function buildBoardHomography(imagePoints) {
     return null;
   }
 
-  // Canonical board coordinates for the 4 reference points (on outer double ring r = 1.0)
   const src = CALIBRATION_REFERENCE_TARGETS.map((target) => {
     const rad = ((target.angleDeg - 90) * Math.PI) / 180.0;
     return {
@@ -340,6 +349,102 @@ export function buildBoardHomography(imagePoints) {
       y: (h10 * bx + h11 * by + h12) / denom
     };
   };
+}
+
+/**
+ * Inverse Homography: maps a normalized camera pixel (u, v) in [0..1]x[0..1]
+ * back onto canonical dartboard coordinates (bx, by) where radius 1.0 = outer double ring.
+ */
+export function buildInverseBoardHomography(imagePoints) {
+  if (!Array.isArray(imagePoints) || imagePoints.length !== 4) {
+    return null;
+  }
+
+  const dst = CALIBRATION_REFERENCE_TARGETS.map((target) => {
+    const rad = ((target.angleDeg - 90) * Math.PI) / 180.0;
+    return {
+      x: Math.cos(rad),
+      y: Math.sin(rad)
+    };
+  });
+
+  const A = [];
+  const b = [];
+
+  for (let i = 0; i < 4; i++) {
+    const sx = imagePoints[i].x;
+    const sy = imagePoints[i].y;
+    const dx = dst[i].x;
+    const dy = dst[i].y;
+
+    A.push([sx, sy, 1, 0, 0, 0, -sx * dx, -sy * dx]);
+    b.push(dx);
+
+    A.push([0, 0, 0, sx, sy, 1, -sx * dy, -sy * dy]);
+    b.push(dy);
+  }
+
+  const h = solveLinearSystem8x8(A, b);
+  if (!h) return null;
+
+  const [h00, h01, h02, h10, h11, h12, h20, h21] = h;
+
+  return function projectImageToBoard(u, v) {
+    const denom = h20 * u + h21 * v + 1.0;
+    if (Math.abs(denom) < 1e-7) {
+      return { x: 0, y: 0 };
+    }
+    return {
+      x: (h00 * u + h01 * v + h02) / denom,
+      y: (h10 * u + h11 * v + h12) / denom
+    };
+  };
+}
+
+/**
+ * Scores a canonical board coordinate (bx, by) to { segment, multiplier, label, score }.
+ */
+export function scoreFromBoardCoordinates(bx, by) {
+  const radius = Math.hypot(bx, by);
+  const rawAngleDeg = (Math.atan2(by, bx) * 180) / Math.PI + 90;
+  const angleDeg = ((rawAngleDeg % 360) + 360) % 360;
+
+  let segment = 0;
+  let multiplier = 0;
+
+  if (radius <= BOARD_RADII.INNER_BULL) {
+    segment = 25;
+    multiplier = 2;
+  } else if (radius <= BOARD_RADII.OUTER_BULL) {
+    segment = 25;
+    multiplier = 1;
+  } else if (radius > BOARD_RADII.DOUBLE_OUTER) {
+    segment = 0;
+    multiplier = 0;
+  } else {
+    const sectorIndex = Math.floor(((angleDeg + 9) % 360) / 18) % 20;
+    segment = BOARD_SECTORS[sectorIndex];
+    if (radius >= BOARD_RADII.DOUBLE_INNER && radius <= BOARD_RADII.DOUBLE_OUTER) {
+      multiplier = 2;
+    } else if (radius >= BOARD_RADII.TRIPLE_INNER && radius <= BOARD_RADII.TRIPLE_OUTER) {
+      multiplier = 3;
+    } else {
+      multiplier = 1;
+    }
+  }
+
+  let label = 'MISS';
+  let score = 0;
+  if (segment === 25) {
+    label = multiplier === 2 ? 'BULL' : '25';
+    score = multiplier === 2 ? 50 : 25;
+  } else if (segment >= 1 && segment <= 20 && multiplier >= 1) {
+    const prefix = multiplier === 3 ? 'T' : multiplier === 2 ? 'D' : 'S';
+    label = `${prefix}${segment}`;
+    score = segment * multiplier;
+  }
+
+  return { segment, multiplier, label, score, radius, angleDeg };
 }
 
 /**

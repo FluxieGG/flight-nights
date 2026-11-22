@@ -4,7 +4,7 @@ import {
   Sun,
   Monitor,
   Camera,
-  Wifi,
+  Eye,
   Target,
   CheckCircle2,
   AlertCircle,
@@ -30,14 +30,14 @@ const WIZARD_STEPS = [
   {
     step: 3,
     title: 'Step 3: Verify Camera Feeds',
-    subtitle: 'Confirm Windows 10 Device Manager & Camera Focus',
+    subtitle: 'Confirm Windows 10 DirectShow Detection & Focus',
     icon: Camera
   },
   {
     step: 4,
-    title: 'Step 4: Start OpenDartboard',
-    subtitle: 'Verify Daemon on ws://localhost:13520',
-    icon: Wifi
+    title: 'Step 4: OpenCV-Darts Vision Scorer',
+    subtitle: 'Built-In 3-Camera Homography & Triangulation Engine',
+    icon: Eye
   },
   {
     step: 5,
@@ -50,8 +50,8 @@ const WIZARD_STEPS = [
 export default function SetupWizardModal({
   isOpen,
   onClose,
-  openDartboardStatus,
-  onReconnectOpenDartboard,
+  scorerStatus,
+  activeUsbCamerasCount = 0,
   cameraDiagnostics,
   onTestCameras,
   onSwitchToCalibration,
@@ -82,10 +82,10 @@ export default function SetupWizardModal({
             </span>
             <div>
               <h2 className="text-xl font-black text-white sm:text-2xl">
-                Smart Darts Setup &amp; Calibration Guide (Windows 10 PC)
+                Flight Nights Setup &amp; Calibration Guide (Windows 10 PC)
               </h2>
               <p className="text-xs font-medium text-slate-400 sm:text-sm">
-                Step-by-step physical hardware, Windows 10 USB camera setup, and OpenDartboard walkthrough
+                Step-by-step physical hardware, Windows 10 USB camera setup, and OpenCV-Darts triangulation walkthrough
               </p>
             </div>
           </div>
@@ -201,7 +201,7 @@ export default function SetupWizardModal({
                   <li className="flex items-start gap-3">
                     <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
                     <div>
-                      <strong className="text-white">Spread Cameras Across USB 3.0 / 2.0 Root Hubs:</strong> Plug all 3 OV9732 USB cameras directly into your Windows 10 PC motherboard USB ports (use the blue <strong>USB 3.0 SuperSpeed ports</strong> and separate front/rear ports rather than a single unpowered USB 2.0 hub) so all three 720p streams run simultaneously without bandwidth drops.
+                      <strong className="text-white">Spread Cameras Across USB 3.0 / 2.0 Root Hubs:</strong> Plug all 3 OV9732 USB cameras directly into your Windows 10 PC motherboard USB ports (use the blue <strong>USB 3.0 SuperSpeed ports</strong> and separate front/rear ports rather than a single unpowered USB 2.0 hub). If all 3 cameras share one hub, the built-in vision engine automatically offers a <strong>480p Safe Mode</strong> so all 3 streams run concurrently without drops.
                     </div>
                   </li>
                   <li className="flex items-start gap-3">
@@ -241,7 +241,7 @@ export default function SetupWizardModal({
                   className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-black text-slate-950 shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
                 >
                   <RefreshCw className={`h-4 w-4 ${testingCameras ? 'animate-spin' : ''}`} />
-                  <span>{testingCameras ? 'Scanning...' : 'Test Cameras'}</span>
+                  <span>{testingCameras ? 'Scanning...' : 'Scan & Test Cameras'}</span>
                 </button>
               </div>
 
@@ -277,70 +277,37 @@ export default function SetupWizardModal({
                   </div>
                 ))}
               </div>
-
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-300">
-                <div className="mb-1.5 font-bold uppercase text-slate-400">
-                  Windows 10 Camera Verification Checklist:
-                </div>
-                <ul className="list-disc space-y-1 pl-4 text-slate-300">
-                  <li>
-                    Press <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono">Win + X</kbd> → <strong>Device Manager</strong> → expand <strong>Cameras</strong> (or <strong>Imaging devices</strong>) to verify all 3 USB cameras are listed without yellow warning icons.
-                  </li>
-                  <li>
-                    Open <strong>Windows Settings → Privacy → Camera</strong> and ensure <em>&ldquo;Allow apps to access your camera&rdquo;</em> and <em>&ldquo;Allow desktop apps to access your camera&rdquo;</em> are turned <strong>On</strong>.
-                  </li>
-                </ul>
-              </div>
             </div>
           )}
 
-          {/* STEP 4: START OPENDARTBOARD */}
+          {/* STEP 4: BUILT-IN OPENCV-DARTS VISION SCORER */}
           {currentStep === 4 && (
             <div className="space-y-4">
               <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="text-lg font-black text-white">
-                      Start &amp; Connect OpenDartboard Vision Engine on Windows 10
+                      Built-In OpenCV-Darts 3-Camera Triangulation Scorer
                     </h3>
                     <p className="text-xs text-slate-400 sm:text-sm">
-                      This app connects automatically to <code className="text-emerald-300">{openDartboardStatus?.url || 'ws://localhost:13520'}</code> and retries every 3 seconds.
+                      Runs natively inside the Windows 10 app — no external Linux daemon, no WSL, and no usbipd required!
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`rounded-xl border px-3 py-1.5 text-xs font-black ${
-                        openDartboardStatus?.connected
-                          ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
-                          : 'border-amber-500/40 bg-amber-500/15 text-amber-300'
-                      }`}
-                    >
-                      {openDartboardStatus?.connected
-                        ? 'OpenDartboard: Connected'
-                        : 'Disconnected / Reconnecting...'}
-                    </span>
-
-                    <button
-                      type="button"
-                      onClick={onReconnectOpenDartboard}
-                      className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-slate-700"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      <span>Test Reconnect</span>
-                    </button>
-                  </div>
+                  <span className="rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-black text-emerald-300">
+                    {scorerStatus?.engineName || 'OpenCV-Darts Scorer'}: Ready ({activeUsbCamerasCount}/3 Live USB)
+                  </span>
                 </div>
 
-                <div className="mt-4 space-y-2 text-sm text-slate-300">
+                <div className="mt-4 space-y-2.5 text-sm text-slate-300">
                   <p>
-                    1. Launch the <strong>OpenDartboard</strong> service on your Windows 10 PC so its WebSocket server listens on port <code className="text-emerald-300">13520</code> (configurable in <code className="text-emerald-300">.env</code> via <code className="text-emerald-300">OPENDARTBOARD_WS_URL</code>). If Windows Defender Firewall prompts you, allow access on Private networks.
+                    1. <strong>Zero External Setup:</strong> As soon as you plug your 3 physical USB cameras into Windows 10, the browser&apos;s persistent DirectShow camera manager opens all 3 feeds and keeps them alive across all tabs.
                   </p>
                   <p>
-                    2. Watch the status badge in the top navigation bar turn green (<strong className="text-emerald-400">OpenDartboard: Connected</strong>).
+                    2. <strong>Background Subtraction &amp; PCA Tip Extraction:</strong> The vision loop captures an empty-board reference frame, detects when a thrown dart lands and stops vibrating, isolates the new dart contour, and locates the exact metal tip using 3D perspective geometry.
                   </p>
                   <p>
-                    3. Incoming JSON dart payloads (<code className="text-emerald-300">{`{"segment": 20, "multiplier": 3, "x": 0.0, "y": -0.6}`}</code>) are immediately scored and logged.
+                    3. <strong>Multi-Camera Ray Triangulation &amp; Auto-Clear:</strong> Detections from Camera 1, Camera 2, and Camera 3 are projected through each camera&apos;s 4-point inverse homography (<code className="text-emerald-300">H⁻¹</code>) and triangulated to compute the exact board coordinate <code className="text-emerald-300">(x, y)</code> and WDF score. When you pull your 3 darts out of the board, it automatically advances to the next turn!
                   </p>
                 </div>
               </div>
@@ -359,14 +326,13 @@ export default function SetupWizardModal({
                     Open the <strong>Camera Calibration</strong> tab, pick your top camera side (<strong>Left of Bar toward 5</strong> or <strong>Right of Bar toward 1</strong>), and click the <strong>4 Double-ring intersection points</strong> on each live camera feed:
                     <span className="ml-1 font-mono text-xs font-bold text-emerald-300">
                       20/1 (Top) → 6/10 (Right) → 3/19 (Bottom) → 11/14 (Left)
-                    </span>. Even if a camera is mounted sideways or upside-down on the ring, the 4-point homography aligns it automatically.
+                    </span>.
                   </li>
                   <li>
-                    Verify that the live visual dartboard ring overlay aligns cleanly with the physical wires on all 3 feeds, then click <strong>Save Calibration</strong> (persists to <code className="text-emerald-300">config/calibration.json</code>).
+                    Verify that the live visual dartboard ring overlay aligns cleanly with the physical wires on all 3 feeds, then click <strong>Save All Cameras</strong> (persists to <code className="text-emerald-300">config/calibration.json</code> and captures the clean empty-board reference).
                   </li>
                   <li>
-                    Switch to the <strong>Live Score Display</strong> and throw 5 test darts in order:
-                    <strong className="text-white"> Bullseye (50), 20 (Top), 3 (Bottom), 11 (Left), and 6 (Right)</strong> to verify 360° triangulation accuracy.
+                    Switch to the <strong>Live Score Display</strong> and throw test darts at <strong className="text-white">Bullseye (50), T20 (Top), T19 (Bottom), D11 (Left), and D6 (Right)</strong> to verify 360° triangulation accuracy.
                   </li>
                 </ol>
 
@@ -386,13 +352,13 @@ export default function SetupWizardModal({
                   <button
                     type="button"
                     onClick={() => {
-                      onSwitchToLiveAndTestDart({ segment: 25, multiplier: 2 });
+                      onSwitchToLiveAndTestDart({ segment: 20, multiplier: 3 });
                       onClose();
                     }}
                     className="flex items-center gap-2 rounded-xl border border-cyan-500/50 bg-cyan-500/15 px-4 py-2.5 text-sm font-bold text-cyan-300 transition hover:bg-cyan-500/25"
                   >
                     <Target className="h-4 w-4" />
-                    <span>Simulate Bullseye Test Throw</span>
+                    <span>Run 3-Camera T20 Triangulation Self-Test</span>
                   </button>
                 </div>
               </div>

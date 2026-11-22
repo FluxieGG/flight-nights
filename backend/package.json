@@ -1,7 +1,7 @@
 {
   "name": "smart-darts-mvp-backend",
   "version": "1.0.0",
-  "description": "Smart Darts MVP Backend - OpenDartboard WebSocket bridge, 3-Camera Calibration store, and Socket.IO server",
+  "description": "Smart Darts MVP Backend - OpenCV-Darts 3-Camera Homography & Triangulation Scorer, Calibration store, and Socket.IO server",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -12,7 +12,6 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "socket.io": "^4.8.1",
-    "ws": "^8.18.0"
+    "socket.io": "^4.8.1"
   }
 }
